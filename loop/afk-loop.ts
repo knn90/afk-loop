@@ -73,7 +73,6 @@ export interface Tracker {
   resolveThread(thread: string): Promise<void>;
   pushBranch(branch: string): Promise<void>;
   openPullRequest(pullRequest: PullRequest): Promise<string>;
-  mergePullRequest(pullRequest: string, closes: number): Promise<"merged" | "conflict">;
   comment(issueOrPullRequest: number, body: string): Promise<void>;
   relabel(issueOrPullRequest: number, relabel: Relabel): Promise<void>;
 }
@@ -147,10 +146,7 @@ export type HandoffOutcome = {
   readonly kind: "handoff";
   readonly branch: string;
   readonly pullRequest?: string;
-} & (
-  | { readonly reason: "attempt-budget"; readonly lastGreenHead?: string; readonly hasCommits: boolean; readonly log: string; readonly rawLog?: string }
-  | { readonly reason: "merge-conflict"; readonly baseBranch: string }
-);
+} & { readonly reason: "attempt-budget"; readonly lastGreenHead?: string; readonly hasCommits: boolean; readonly log: string; readonly rawLog?: string };
 
 export interface ReviewedOutcome {
   readonly issue: number;
@@ -174,7 +170,6 @@ export type RevisionHandoffOutcome = {
 
 export type Outcome =
   | ReviewedOutcome
-  | { readonly issue: number; readonly kind: "merged"; readonly branch: string; readonly pullRequest: string }
   | { readonly issue: number; readonly kind: "no-commits" }
   | HandoffOutcome
   | { readonly issue: number; readonly kind: "revised"; readonly pullRequest: number; readonly pushed: boolean; readonly log: string }
@@ -188,7 +183,6 @@ export interface AfkLoopOptions {
   readonly agents: Agents;
   readonly testRunner: TestRunner;
   readonly cap?: number;
-  readonly autoMerge?: boolean;
   readonly baseBranch: string;
   readonly platforms: readonly Platform[];
 }
@@ -222,8 +216,7 @@ export async function runAfkLoop(loop: AfkLoopOptions): Promise<Outcome[]> {
     const working = withLinkedIssues(issue, loop.tracker).then((briefed) => (pullRequest ? revise({ ...pullRequest, issue: briefed }, loop) : work(briefed, loop)));
     const outcome = await working.catch((error: unknown): Outcome => ({ issue: issue.number, kind: "error", message: String(error) }));
     outcomes.push(outcome);
-    const handedOff = outcome.kind === "handoff" || outcome.kind === "revision-handoff";
-    if (outcome.kind === "error" || (loop.autoMerge && handedOff)) break;
+    if (outcome.kind === "error") break;
   }
   return outcomes;
 }
@@ -263,16 +256,10 @@ async function work(issue: Issue, loop: AfkLoopOptions): Promise<Outcome> {
   for (const leftover of localBranches) await loop.agents.discardLeftover(leftover.name);
 
   const outcome = await runSession(issue, loop);
-  if (outcome.kind === "handoff" && outcome.reason === "attempt-budget") return handOff(issue, outcome, loop.tracker);
+  if (outcome.kind === "handoff") return handOff(issue, outcome, loop.tracker);
   if (outcome.kind !== "pull-request") return outcome;
-  const pullRequest = await openPullRequest(issue, outcome, loop);
-  const green = outcome.platforms.length > 0 && !outcome.openFindings;
-  return loop.autoMerge && green ? merge(issue, outcome.branch, pullRequest, loop) : outcome;
-}
-
-async function merge(issue: Issue, branch: string, pullRequest: string, { tracker, baseBranch }: AfkLoopOptions): Promise<Outcome> {
-  if ((await tracker.mergePullRequest(pullRequest, issue.number)) === "merged") return { issue: issue.number, kind: "merged", branch, pullRequest };
-  return handOff(issue, { issue: issue.number, kind: "handoff", branch, pullRequest, reason: "merge-conflict", baseBranch }, tracker);
+  await openPullRequest(issue, outcome, loop);
+  return outcome;
 }
 
 async function runSession(issue: Issue, loop: AfkLoopOptions): Promise<Outcome> {
@@ -390,10 +377,6 @@ async function handOff(issue: Issue, handoff: HandoffOutcome, tracker: Tracker):
   const { branch } = handoff;
   const { why, details, keptLocal } = describeHandoff(handoff);
   const headline = `Handed off to a human: ${why}.`;
-  if (handoff.reason === "merge-conflict") {
-    await tracker.comment(issue.number, [headline, `PR: ${handoff.pullRequest}`].join("\n\n"));
-    return handoff;
-  }
   let pushed = false;
   let pullRequest: string | undefined;
   if (!keptLocal) {
@@ -418,7 +401,6 @@ async function handOff(issue: Issue, handoff: HandoffOutcome, tracker: Tracker):
 }
 
 export function describeHandoff(handoff: HandoffOutcome): { why: string; details?: string; keptLocal?: string } {
-  if (handoff.reason === "merge-conflict") return { why: `the PR is green but no longer merges cleanly into \`${handoff.baseBranch}\`, so it wasn't merged` };
   const { branch } = handoff;
   const why = handoff.lastGreenHead
     ? `the Attempt budget (${attemptBudget}) ran out in review, after the Implementer's green Test run (last green at \`${handoff.lastGreenHead}\`)`

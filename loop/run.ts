@@ -10,8 +10,6 @@ import { routedTestRun } from "./test-run.js";
 
 function report(outcome: Outcome): string {
   switch (outcome.kind) {
-    case "merged":
-      return `merged (${outcome.pullRequest})`;
     case "handoff":
       return `handoff (${outcome.pullRequest ?? "no PR"}): ${describeHandoff(outcome).why}`;
     case "revised":
@@ -27,18 +25,18 @@ function report(outcome: Outcome): string {
   }
 }
 
-export function runOptions(args: readonly string[]): { cap: number; autoMerge: boolean } {
+export function runOptions(args: readonly string[]): { cap: number } {
   const { values } = parseArgs({
     args: [...args],
-    options: { cap: { type: "string", default: String(defaultCap) }, "auto-merge": { type: "boolean", default: false } },
+    options: { cap: { type: "string", default: String(defaultCap) } },
   });
   const cap = Number(values.cap);
   check(Number.isInteger(cap) && cap > 0, "--cap must be a positive integer");
-  return { cap, autoMerge: values["auto-merge"] };
+  return { cap };
 }
 
 export async function run(loop: Loop, host: Host, args: readonly string[]) {
-  const { cap, autoMerge } = runOptions(args);
+  const { cap } = runOptions(args);
   loadHostEnv(host);
   checkTart(loop);
   await checkRepoOnGitHub(loop, host);
@@ -49,7 +47,6 @@ export async function run(loop: Loop, host: Host, args: readonly string[]) {
     agents: sandcastleAgents(loop, host),
     testRunner: routedTestRun(host),
     cap,
-    autoMerge,
     baseBranch: loop.baseBranch,
     platforms: loop.platforms,
   });
