@@ -507,6 +507,23 @@ describe("runAfkLoop, Fix round", () => {
     assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #1\.\n\n## Summary\n\nOne run\.\n\n/);
   });
 
+  test("a first review the Host cannot read is an error after the branch is put back: no PR opens, and the run stops", async () => {
+    const { sut, tracker, agents, calls } = makeSUT({ issues: [issue(1), issue(2)], runs: { 1: [{}, { unreadable: true }] } });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes, [
+      {
+        issue: 1,
+        kind: "error",
+        message: "Error: The Reviewer's reply gives no <fixable-findings> block and <open-findings> block the Host can read, so its findings are unknown. Its log: logs/review-1",
+      },
+    ]);
+    assert.deepEqual(calls.slice(-3), ["review", "put back head-1", "close issue/1-issue-1"]);
+    assert.deepEqual(tracker.pullRequests, []);
+    assert.deepEqual(agents.startedIssues, [1]);
+  });
+
   test("whatever a Reviewer run leaves behind, the branch is put back at the tested commit and no Test run follows", async () => {
     const { sut, tracker, calls } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { commits: 2, dirty: true }] } });
 
@@ -863,6 +880,7 @@ interface Run {
   reply?: string;
   findingsLeft?: string;
   noOpenFindingsBlock?: true;
+  unreadable?: true;
 }
 
 function makeSUT(fixture: Fixture) {
@@ -1013,7 +1031,7 @@ class SpyAgents implements Agents {
       },
       review: async () => {
         this.calls.push("review");
-        return reviewerRun();
+        return { ...reviewerRun(), ...(run().unreadable ? { unreadable: true as const } : {}) };
       },
       wrapUp: async (fixRound) => {
         this.calls.push("wrap up");

@@ -5,14 +5,22 @@ import { folder, type Platform } from "./platforms.js";
 
 export const completionSignal = "<promise>COMPLETE</promise>";
 
-export const glossaryRule = "Read GLOSSARY.md and use its vocabulary; if GLOSSARY-MAP.md exists, follow it to the context you change.";
+export const glossaryRule = "Read GLOSSARY.md and use its vocabulary; if GLOSSARY-MAP.md exists, follow it to the glossary of the code you work on.";
 
 function blocks(reply: string, tag: string): RegExpExecArray[] {
   return [...reply.matchAll(new RegExp(`<${tag}>((?:(?!<${tag}>)[\\s\\S])*?)</${tag}>`, "g"))];
 }
 
 export function lastBlock(reply: string, tag: string): string | undefined {
-  return blocks(reply, tag).at(-1)?.[1]?.trim() || undefined;
+  const text = blocks(reply, tag).at(-1)?.[1]?.trim();
+  return text && !/^none\.?$/i.test(text) ? text : undefined;
+}
+
+export function replyBlocks(tags: readonly string[], empty: string): string {
+  const [these, theirTags] = tags.length > 1 ? ["these blocks, each once and in this order", "these tags"] : ["this block, once", "its tags"];
+  return `End your reply with ${these}, then ${completionSignal}. ${empty} Write ${theirTags} nowhere else in your reply.
+
+${tags.map((tag) => `<${tag}>\n</${tag}>`).join("\n")}`;
 }
 
 export function hasBlock(reply: string, tag: string): boolean {
@@ -74,4 +82,4 @@ export function sandboxLimits(project: Project): string {
 - The Host pushes, opens the PR and updates the issue: this Sandbox has no GitHub access.`;
 }
 
-export const doneTail = `all committed, and \`git status\` is clean. Then reply with ${completionSignal}.`;
+export const committed = "all committed, and `git status` is clean";

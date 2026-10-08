@@ -111,6 +111,7 @@ export interface Review {
 
 export interface FirstReview extends Review {
   readonly fixableFindings?: string;
+  readonly unreadable?: true;
 }
 
 export interface WrapUp {
@@ -178,6 +179,7 @@ const implementedBy = "Implemented by the AFK loop's Implementer in the Sandbox.
 const reviewedBy = "Reviewed by the AFK loop's Reviewer in the Sandbox.";
 const fixesNotIncluded = "The Fix round failed its Test run, so its fixes are not included: the Reviewer's Fixable findings are among the Open findings.";
 const noneFixed = "The Fix round failed, so none of these Fixable findings is fixed:";
+const unreadableReview = "The Reviewer's reply gives no <fixable-findings> block and <open-findings> block the Host can read, so its findings are unknown.";
 const reviewerSays = `${loopMarker}\n**The AFK loop's Reviewer:**`;
 
 export function issueBranchPrefix(issueNumber: number): string {
@@ -302,6 +304,7 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
 
     if (fixRound) return wrapUp(fixRound, worktree.head, worktree.platforms);
     const review = await reviewerRun(session.review(), worktree.head);
+    if (review.unreadable) throw new Error(`${unreadableReview} Its log: ${review.log}`);
     if (!review.fixableFindings) return pullRequest(review, worktree.platforms);
     fixRound = { fixableFindings: review.fixableFindings, openFindings: review.openFindings, reviewedHead: worktree.head };
     reviewedPlatforms = worktree.platforms;

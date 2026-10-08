@@ -11,7 +11,7 @@ describe("implementerPrompt", () => {
 
     const prompt = sut.prompt();
 
-    assert.match(prompt, /Read GLOSSARY\.md and use its vocabulary; if GLOSSARY-MAP\.md exists, follow it to the context you change\./);
+    assert.match(prompt, /Read GLOSSARY\.md and use its vocabulary; if GLOSSARY-MAP\.md exists, follow it to the glossary of the code you work on\./);
     assert.ok(!prompt.includes("CONTEXT"));
   });
 
@@ -36,7 +36,8 @@ describe("implementerPrompt", () => {
 
     const prompt = sut.prompt();
 
-    assert.match(prompt, /Invoke the `mattpocock-skills:tdd` skill with the Skill tool/);
+    assert.match(prompt, /Invoke the `mattpocock-skills:tdd` skill with the Skill tool and work the issue test-first with it: for each behaviour the issue asks for, a test/);
+    assert.ok(prompt.endsWith("all committed, and `git status` is clean. Then reply with <promise>COMPLETE</promise>."));
   });
 
   test("names every platform's coding standards, to follow by the folder changed", () => {
@@ -87,17 +88,18 @@ describe("implementerPrompt", () => {
 describe("implementerPrompt, Fix round", () => {
   const fixable = "web/src/streak.ts:12: rename `x`.";
 
-  test("carries the Fixable findings as its feedback, as the one Fix round and not as a rejected run", () => {
+  test("carries the Fixable findings in their own block, as the one Fix round and not as a rejected run", () => {
     const sut = makeSUT();
 
     const prompt = sut.fix(fixable);
 
     assert.ok(
       prompt.includes(
-        "</issue>\n\nYour work on this issue passed the Test run and the Reviewer reviewed it. This is your one Fix round: fix the Reviewer's Fixable findings.\n\n<host-feedback>\nweb/src/streak.ts:12: rename `x`.\n</host-feedback>\n\nHow to work:",
+        "</issue>\n\nYour work on this issue passed the Test run and the Reviewer reviewed it. This is your one Fix round: fix the Reviewer's Fixable findings.\n\n<fixable-findings>\nweb/src/streak.ts:12: rename `x`.\n</fixable-findings>\n\nHow to work:",
       ),
     );
     assert.ok(!prompt.includes("Your last run was rejected"));
+    assert.ok(!prompt.includes("host-feedback"));
   });
 
   test("asks for a block listing each finding it left and why", () => {
@@ -107,10 +109,15 @@ describe("implementerPrompt, Fix round", () => {
 
     assert.ok(
       prompt.includes(
-        "- You may leave a finding you judge wrong: change nothing for it. End your reply with each finding you left and why, between `<findings-left>` and `</findings-left>`. With none, leave the block empty. The Host passes the block to the Reviewer.",
+        "- You may leave a finding you judge wrong: change nothing for it. List each finding you left in this Fix round, and why, in the <findings-left> block. The Host passes the block to the Reviewer.",
       ),
     );
-    assert.match(prompt, /Done means every finding in <host-feedback> is fixed or is in <findings-left> with why, all committed/);
+    assert.ok(
+      prompt.endsWith(
+        "Done means every finding in <fixable-findings> is fixed or is in <findings-left> with why, all committed, and `git status` is clean. End your reply with this block, once, then <promise>COMPLETE</promise>. An empty block means you left none. Write its tags nowhere else in your reply.\n\n<findings-left>\n</findings-left>",
+      ),
+    );
+    assert.equal(prompt.split("<promise>COMPLETE</promise>").length, 2);
   });
 
   test("fixes the findings alone", () => {
@@ -118,7 +125,9 @@ describe("implementerPrompt, Fix round", () => {
 
     const prompt = sut.fix(fixable);
 
-    assert.ok(prompt.includes("- Fix only the findings in <host-feedback>, each with the test it needs. Add nothing else: the Reviewer reviews this round's commits once more, and nothing they add gets another Fix round."));
+    assert.ok(prompt.includes("- Fix only the findings in <fixable-findings>: the Reviewer reviews this round's commits once more, and nothing they add gets another Fix round."));
+    assert.ok(prompt.includes("skill with the Skill tool and fix each finding test-first with it: where a fix changes behaviour, a test that would fail without it, in the test framework those standards name, then the fix."));
+    assert.ok(!prompt.includes("each behaviour the issue asks for"));
     assert.ok(!prompt.includes("every acceptance criterion"));
   });
 
@@ -127,9 +136,13 @@ describe("implementerPrompt, Fix round", () => {
 
     const prompt = sut.fix(fixable, "error: boom");
 
-    assert.ok(prompt.includes("<host-feedback>\nweb/src/streak.ts:12: rename `x`.\n\nYour last run in this Fix round was rejected. Fix this too:\n\nerror: boom\n</host-feedback>"));
-    assert.match(prompt, /Done means every finding in <host-feedback> is fixed or is in <findings-left> with why, the rejection there is fixed, all committed/);
-    assert.ok(prompt.includes("`<findings-left>` and `</findings-left>`"));
+    assert.ok(
+      prompt.includes(
+        "<fixable-findings>\nweb/src/streak.ts:12: rename `x`.\n</fixable-findings>\n\nYour last run in this Fix round was rejected; its commits are on this branch. Fix this too:\n\n<host-feedback>\nerror: boom\n</host-feedback>\n\nHow to work:",
+      ),
+    );
+    assert.match(prompt, /Done means every finding in <fixable-findings> is fixed or is in <findings-left> with why, every failure in <host-feedback> is fixed, all committed/);
+    assert.ok(prompt.endsWith("<findings-left>\n</findings-left>"));
   });
 
   test("the first round asks for no such block", () => {
@@ -148,6 +161,7 @@ describe("findingsLeft", () => {
   test("an empty block or a missing one gives none", () => {
     assert.equal(findingsLeft("<findings-left>\n</findings-left>"), undefined);
     assert.equal(findingsLeft("All fixed."), undefined);
+    assert.equal(findingsLeft("<findings-left>\nNone.\n</findings-left>"), undefined);
   });
 
   test("the last block in the reply is the one read", () => {

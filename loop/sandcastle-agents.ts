@@ -7,7 +7,7 @@ import type { Loop } from "./loop-config.js";
 import { findingsLeft, implementerPrompt } from "./implementer-prompt.js";
 import { platformsChanged, type Platform } from "./platforms.js";
 import { completionSignal } from "./prompt-parts.js";
-import { fixableFindings, openFindings, pullRequestDraft, reviewerPrompt, wrapUpOpenFindings, wrapUpPrompt } from "./reviewer-prompt.js";
+import { answeredOpenFindings, firstReview, pullRequestDraft, reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
 import { copyFileOut, guestExec, guestRepo, quote, repoExec, tartSandbox } from "./tart.js";
 
 const sandcastleSyncBase = "refs/sandcastle/sync-base";
@@ -192,11 +192,11 @@ export function sandcastleAgents(loop: Loop, host: Host): Agents {
         },
         async review() {
           const run = await runAgent("Reviewer", reviewerPrompt({ project: loop, issue, branch, base, standards: await standards() }));
-          return { log: run.log, fixableFindings: fixableFindings(run.output), openFindings: openFindings(run.output), pullRequestDraft: pullRequestDraft(run.output) };
+          return { log: run.log, ...firstReview(run.output) };
         },
         async wrapUp(fixRound) {
           const run = await runAgent("Reviewer", wrapUpPrompt({ project: loop, issue, branch, base, standards: await standards(), fixRound }));
-          return { log: run.log, openFindings: wrapUpOpenFindings(run.output), pullRequestDraft: pullRequestDraft(run.output) };
+          return { log: run.log, openFindings: answeredOpenFindings(run.output), pullRequestDraft: pullRequestDraft(run.output) };
         },
         putBack: sandbox.putBack,
         inspect: () => sandbox.inspect(base),

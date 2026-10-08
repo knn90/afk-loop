@@ -85,17 +85,18 @@ The Implementer has no diff to route on yet, so its prompt names every platform'
   - the fix reaches outside this diff: another module, or a later issue's work;
   - the Reviewer is not sure the finding is valid.
 - The Reviewer's first run returns the Fixable findings as text for the Implementer, in the last `<fixable-findings>` block of its reply, the Open findings, and, with no Fixable finding, the PR body.
+  - Both findings blocks are always in its reply, an empty one for none. A reply that lacks one, or whose `<open-findings>` block has text and no `<finding>`, is an error: the run stops with no PR opened, after the branch is put back at the tested commit.
 - The Fix round: one per issue, only when the first run returned a Fixable finding.
-  - The Implementer runs with only the Fixable findings as its feedback.
+  - The Implementer runs with only the Fixable findings, in a `<fixable-findings>` block, and fixes each test-first.
   - It may leave a finding it judges wrong. It lists each one it left and why in the last `<findings-left>` block of its reply; the Host passes the wrap-up the latest block that lists one, of all the Fix round's runs.
-  - New commits get a Test run. A failure goes back to the Implementer, after the Fixable findings, and spends the Attempt budget, shared with the first round. Uncommitted changes are a failed Attempt.
+  - New commits get a Test run. A failure goes back to the Implementer as Host feedback, after the Fixable findings, and spends the Attempt budget, shared with the first round. Uncommitted changes are a failed Attempt.
   - No new commits: no Test run.
   - Attempt budget spent in the Fix round is not a Handoff. The Host puts the branch back at the first round's green commit, dropping the Fix round's commits; the wrap-up still runs, on that commit, and the PR opens as usual.
 - The wrap-up: the second Reviewer run, only after a Fix round. It gets the first run's Fixable and Open findings and the findings the Implementer left.
   - It reviews the Fix round's commits only (the first round's green commit to the head) with the code-review skill, against the same coding standards, with no design review. Every finding there is an Open finding.
   - It returns the final Open findings: the first run's, restated against the final diff, each Fixable finding that was not fixed, with the Implementer's reason where it gave one, and each finding in the Fix round's commits.
   - After a Fix round that spent the Attempt budget it reviews nothing, and every Fixable finding becomes an Open finding. If its reply then gives no Open finding, the Host posts the Fixable findings' text itself, as one Open finding in the review's body.
-  - A reply with no `<open-findings>` block is not an empty one: the Host posts the first run's Open findings itself.
+  - A reply with no `<open-findings>` block, or one with text and no `<finding>`, is not an empty one: the Host posts the first run's Open findings itself.
   - It drafts the PR body.
   - What it finds never starts a second Fix round.
 - The PR body: `Closes #n.`, then the Reviewer's draft, then the Host's own lines: who worked it, how many Open findings were posted (or that there were none), that the Fix round failed its Test run and its fixes are not included (when it did), what the Test run verified.
