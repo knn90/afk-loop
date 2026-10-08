@@ -13,7 +13,6 @@ export function fenced(text: string): string {
 }
 
 export const loopMarker = "<!-- afk-loop -->";
-export const revisionSummaryMarker = "<!-- afk-loop:revision-summary -->";
 
 export const budgetSpentWhy = `the Attempt budget (${attemptBudget}) ran out without a green Test run`;
 

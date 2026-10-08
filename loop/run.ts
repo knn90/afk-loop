@@ -4,7 +4,6 @@ import { githubTracker } from "./github-tracker.js";
 import { check, checkTart, deleteLeftoverVms, loadHostEnv, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
 import { checkRepoOnGitHub } from "./preflight.js";
-import { describeRevisionHandoff } from "./revision.js";
 import { sandcastleAgents } from "./sandcastle-agents.js";
 import { routedTestRun } from "./test-run.js";
 
@@ -14,12 +13,6 @@ function report(outcome: Outcome): string {
       return `merged (${outcome.pullRequest})`;
     case "handoff":
       return `handoff (${outcome.pullRequest ?? "no PR"}): ${describeHandoff(outcome).why}`;
-    case "revised":
-      return `PR #${outcome.pullRequest} revised, ${outcome.pushed ? "pushed" : "nothing to push"}`;
-    case "no-review-comments":
-      return `PR #${outcome.pullRequest}: no open review comments found`;
-    case "revision-handoff":
-      return `PR #${outcome.pullRequest} Revision handoff: ${describeRevisionHandoff(outcome).why}`;
     case "error":
       return `error: ${outcome.message}`;
     default:
@@ -53,6 +46,6 @@ export async function run(loop: Loop, host: Host, args: readonly string[]) {
     baseBranch: loop.baseBranch,
     platforms: loop.platforms,
   });
-  if (outcomes.length === 0) console.log("No Revision PR or Eligible issue");
+  if (outcomes.length === 0) console.log("No Eligible issue");
   for (const outcome of outcomes) console.log(`#${outcome.issue}: ${report(outcome)}`);
 }
