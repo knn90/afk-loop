@@ -45,7 +45,7 @@ The 3 failed Attempts an issue may spend, shared by Implementer and Reviewer. Un
 _Avoid_: retries, max tries
 
 **Handoff**:
-Returning an issue to the maintainer as `ready-for-human` when the Attempt budget runs out. A Handoff does not end the run.
+Returning an issue to the maintainer as `ready-for-human`, with one comment, when the Attempt budget runs out or the Implementer makes no commits. Nothing is pushed. A Handoff does not end the run.
 _Avoid_: failure, abort
 
 **Leftover**:

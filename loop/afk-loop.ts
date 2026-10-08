@@ -2,6 +2,7 @@ import {
   attemptBudget,
   budgetSpentWhy,
   dirtyFeedback,
+  fenced,
   lastAttemptDetails,
   loopMarker,
   readyForAgent,
@@ -91,8 +92,13 @@ export interface Session {
 }
 
 export interface IssueSession extends Session {
-  implement(feedback?: string): Promise<void>;
+  implement(feedback?: string): Promise<ImplementerRun>;
   review(feedback?: string): Promise<Review>;
+}
+
+export interface ImplementerRun {
+  readonly reply: string;
+  readonly log: string;
 }
 
 export interface Review {
@@ -116,8 +122,10 @@ export type HandoffOutcome = {
   readonly issue: number;
   readonly kind: "handoff";
   readonly branch: string;
-  readonly pullRequest?: string;
-} & { readonly reason: "attempt-budget"; readonly lastGreenHead?: string; readonly hasCommits: boolean; readonly log: string; readonly rawLog?: string };
+} & (
+  | { readonly reason: "attempt-budget"; readonly lastGreenHead?: string; readonly log: string; readonly rawLog?: string }
+  | { readonly reason: "no-commits"; readonly lastReply: string; readonly implementerLog: string }
+);
 
 export interface ReviewedOutcome {
   readonly issue: number;
@@ -131,7 +139,6 @@ export interface ReviewedOutcome {
 
 export type Outcome =
   | ReviewedOutcome
-  | { readonly issue: number; readonly kind: "no-commits" }
   | HandoffOutcome
   | { readonly issue: number; readonly kind: "local-branch"; readonly branch: string }
   | { readonly issue: number; readonly kind: "error"; readonly message: string };
@@ -233,15 +240,19 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
       reviewLogs.push(review.log);
       ({ pullRequestDraft } = review);
       if (!feedback) ({ openFindings } = review);
-    } else await session.implement(feedback);
-
-    worktree = await session.inspect();
+      worktree = await session.inspect();
+    } else {
+      const run = await session.implement(feedback);
+      worktree = await session.inspect();
+      if (!worktree.dirty && worktree.commitsAhead === 0) {
+        return { issue: issue.number, kind: "handoff", branch, reason: "no-commits", lastReply: run.reply, implementerLog: run.log };
+      }
+    }
     if (worktree.dirty) {
       fail(dirtyFeedback);
       continue;
     }
-    if (worktree.commitsAhead === 0) {
-      if (!lastGreenHead) return { issue: issue.number, kind: "no-commits" };
+    if (worktree.commitsAhead === 0 && lastGreenHead) {
       fail(lostCommitsFeedback(lastGreenHead));
       continue;
     }
@@ -264,13 +275,11 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
     feedback = undefined;
   }
   const log = worktree?.dirty && lastFailure ? `${dirtyFeedback}\n\nThe Test run before it reported:\n\n${lastFailure.log}` : (feedback ?? "");
-  const hasCommits = (worktree?.commitsAhead ?? 0) > 0;
   return {
     issue: issue.number,
     kind: "handoff",
     branch,
     reason: "attempt-budget",
-    hasCommits,
     log,
     ...(lastFailure ? { rawLog: testRunner.rawLogPath(branch) } : {}),
     ...(lastGreenHead ? { lastGreenHead } : {}),
@@ -334,57 +343,30 @@ function bullet({ at, text }: OpenFinding): string {
 async function handOff(issue: Issue, handoff: HandoffOutcome, tracker: Tracker): Promise<HandoffOutcome> {
   await tracker.relabel(issue.number, { remove: readyForAgent, add: readyForHuman });
   const { branch } = handoff;
-  const { why, details, keptLocal } = describeHandoff(handoff);
-  const headline = `Handed off to a human: ${why}.`;
-  let pushed = false;
-  let pullRequest: string | undefined;
-  if (!keptLocal) {
-    try {
-      await tracker.pushBranch(branch);
-      pushed = true;
-      pullRequest = await tracker.openPullRequest({
-        branch,
-        title: `[#${issue.number}] - Handoff: ${summary(issue)}`,
-        body: [`Refs #${issue.number}.`, headline, implementedBy, details, requeueSteps(branch, true, true)].join("\n\n"),
-        label: readyForHuman,
-      });
-    } catch {
-      // the adapter's stderr already reports it
-    }
-  }
-  const where = pullRequest
-    ? [`PR: ${pullRequest}`]
-    : [keptLocal ?? (pushed ? `\`${branch}\` is pushed; opening its PR failed.` : `Pushing \`${branch}\` failed; it stays local.`), details];
-  await tracker.comment(issue.number, [headline, ...where, requeueSteps(branch, pushed, !!pullRequest)].join("\n\n"));
-  return pullRequest ? { ...handoff, pullRequest } : handoff;
+  const { why, details } = describeHandoff(handoff);
+  await tracker.comment(
+    issue.number,
+    [
+      `Handed off to a human: ${why}.`,
+      details,
+      `The branch \`${branch}\` and its worktree stay on the Host; nothing is pushed.`,
+      `To requeue for the loop: remove the local \`${branch}\` branch and its worktree, relabel the issue \`${readyForAgent}\`.`,
+    ].join("\n\n"),
+  );
+  return handoff;
 }
 
-export function describeHandoff(handoff: HandoffOutcome): { why: string; details?: string; keptLocal?: string } {
-  const { branch } = handoff;
+export function describeHandoff(handoff: HandoffOutcome): { why: string; details: string } {
+  if (handoff.reason === "no-commits") {
+    return {
+      why: "the Implementer made no commits",
+      details: `The Implementer's last reply (its log on the Host: \`${handoff.implementerLog}\`):\n\n${fenced(handoff.lastReply)}`,
+    };
+  }
   const why = handoff.lastGreenHead
     ? `the Attempt budget (${attemptBudget}) ran out in review, after the Implementer's green Test run (last green at \`${handoff.lastGreenHead}\`)`
     : budgetSpentWhy;
-  return {
-    why,
-    details: lastAttemptDetails(handoff.log, handoff.rawLog),
-    ...(handoff.hasCommits ? {} : { keptLocal: noCommitsNote(branch, handoff.lastGreenHead) }),
-  };
-}
-
-function noCommitsNote(branch: string, lastGreenHead?: string): string {
-  return lastGreenHead
-    ? `\`${branch}\` lost its commits in review; \`${lastGreenHead}\` is still in the local repository.`
-    : `\`${branch}\` has only uncommitted work, in its local worktree (\`git worktree list\`).`;
-}
-
-function requeueSteps(branch: string, pushed: boolean, hasPullRequest: boolean): string {
-  const steps = [
-    ...(hasPullRequest ? ["close the PR"] : []),
-    ...(pushed ? [`delete \`${branch}\` on GitHub`] : []),
-    `remove the local \`${branch}\` branch and its worktree`,
-    `relabel the issue \`${readyForAgent}\``,
-  ];
-  return `To requeue for the loop: ${steps.join(", ")}.`;
+  return { why, details: lastAttemptDetails(handoff.log, handoff.rawLog) };
 }
 
 function summary(issue: Issue): string {

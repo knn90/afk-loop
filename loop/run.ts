@@ -7,10 +7,10 @@ import { checkRepoOnGitHub } from "./preflight.js";
 import { sandcastleAgents } from "./sandcastle-agents.js";
 import { routedTestRun } from "./test-run.js";
 
-function report(outcome: Outcome): string {
+export function report(outcome: Outcome): string {
   switch (outcome.kind) {
     case "handoff":
-      return `handoff (${outcome.pullRequest ?? "no PR"}): ${describeHandoff(outcome).why}`;
+      return `handoff: ${describeHandoff(outcome).why}`;
     case "error":
       return `error: ${outcome.message}`;
     default:

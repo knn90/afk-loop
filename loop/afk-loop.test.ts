@@ -122,17 +122,39 @@ describe("runAfkLoop", () => {
     assert.deepEqual(agents.startedIssues, [2]);
   });
 
-  test("an Implementer with no commits opens no PR and the issue isn't picked again", async () => {
-    const { sut, agents, tracker } = makeSUT({ issues: [issue(1), issue(2)], runs: { 1: [{ commits: 0 }] } });
+  test("an Implementer whose first run makes no commits hands off after that one run, with its last reply", async () => {
+    const { sut, agents, tracker, calls } = makeSUT({ issues: [issue(1), issue(2)], runs: { 1: [{ commits: 0, reply: "Issue 1 is already done." }] } });
+    const branch = "issue/1-issue-1";
 
     const outcomes = await sut.run();
 
+    assert.deepEqual(outcomes[0], { issue: 1, kind: "handoff", branch, reason: "no-commits", lastReply: "Issue 1 is already done.", implementerLog: "logs/implementer-1" });
+    assert.deepEqual(calls.slice(0, 6), [`start ${branch}`, "implement", "inspect", `close ${branch}`, "relabel #1: -ready-for-agent +ready-for-human", "comment on #1"]);
+    assert.deepEqual(tracker.comments, [
+      [
+        "Handed off to a human: the Implementer made no commits.",
+        "The Implementer's last reply (its log on the Host: `logs/implementer-1`):\n\n```text\nIssue 1 is already done.\n```",
+        "The branch `issue/1-issue-1` and its worktree stay on the Host; nothing is pushed.",
+        "To requeue for the loop: remove the local `issue/1-issue-1` branch and its worktree, relabel the issue `ready-for-agent`.",
+      ].join("\n\n"),
+    ]);
     assert.deepEqual(outcomes.map((o) => [o.issue, o.kind]), [
-      [1, "no-commits"],
+      [1, "handoff"],
       [2, "pull-request"],
     ]);
     assert.deepEqual(agents.startedIssues, [1, 2]);
     assert.deepEqual(tracker.pushed, ["issue/2-issue-2"]);
+    assert.deepEqual(tracker.pullRequests.map((pr) => pr.branch), ["issue/2-issue-2"]);
+  });
+
+  test("an Implementer that undoes its uncommitted changes and makes no commits hands off without spending the rest of the budget", async () => {
+    const { sut, agents, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{ dirty: true, commits: 0 }, { commits: 0, reply: "Nothing to do." }] } });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes, [{ issue: 1, kind: "handoff", branch: "issue/1-issue-1", reason: "no-commits", lastReply: "Nothing to do.", implementerLog: "logs/implementer-2" }]);
+    assert.deepEqual(agents.feedback, [undefined, dirtyFeedback]);
+    assert.deepEqual(tracker.pushed, []);
   });
 
   test("a failed Test run sends its log to the next Attempt, and a green one opens the PR", async () => {
@@ -199,16 +221,15 @@ describe("runAfkLoop", () => {
         kind: "handoff",
         branch,
         reason: "attempt-budget",
-        hasCommits: true,
         log: "error: three",
         rawLog: `raw/${branch}`,
         lastGreenHead: "head-1",
-        pullRequest: `https://pr/${branch}`,
       },
     ]);
     assert.equal(agents.reviewFeedback.length, 3);
-    assert.match(tracker.pullRequests[0]?.body ?? "", /in review[\s\S]*last green at `head-1`[\s\S]*error: three/);
-    assert.match(tracker.comments[0] ?? "", /in review[\s\S]*last green at `head-1`[\s\S]*https:\/\/pr\//);
+    assert.match(tracker.comments[0] ?? "", /in review[\s\S]*last green at `head-1`[\s\S]*error: three/);
+    assert.deepEqual(tracker.pushed, []);
+    assert.deepEqual(tracker.pullRequests, []);
   });
 
   test("an Attempt budget spent on a dirty Reviewer hands off without the Implementer's fixed failure", async () => {
@@ -226,10 +247,8 @@ describe("runAfkLoop", () => {
         kind: "handoff",
         branch: "issue/1-issue-1",
         reason: "attempt-budget",
-        hasCommits: true,
         log: dirtyFeedback,
         lastGreenHead: "head-2",
-        pullRequest: "https://pr/issue/1-issue-1",
       },
     ]);
   });
@@ -254,8 +273,8 @@ describe("runAfkLoop", () => {
     assert.equal(outcomes[0]?.kind, "handoff");
     assert.equal(agents.reviewFeedback.length, 3);
     assert.deepEqual(tracker.pushed, []);
-    assert.match(tracker.comments[0] ?? "", /lost its commits in review; `head-1` is still in the local repository/);
-    assert.doesNotMatch(tracker.comments[0] ?? "", /uncommitted work|Test run output filtered/);
+    assert.match(tracker.comments[0] ?? "", /last green at `head-1`/);
+    assert.doesNotMatch(tracker.comments[0] ?? "", /Test run output filtered/);
   });
 
   test("a Reviewer leaving a dirty worktree is asked for a commit before any Test run", async () => {
@@ -268,7 +287,7 @@ describe("runAfkLoop", () => {
     assert.equal(testRuns(calls), 2);
   });
 
-  test("three failed Attempts hand off: PR with the last failure log, comment, relabel", async () => {
+  test("three failed Attempts hand off: the issue relabelled and one comment, nothing pushed and no PR", async () => {
     const { sut, agents, tracker, calls } = makeSUT({
       issues: [issue(1)],
       runs: { 1: [{}, { dirty: true }, {}] },
@@ -284,28 +303,25 @@ describe("runAfkLoop", () => {
         kind: "handoff",
         branch,
         reason: "attempt-budget",
-        hasCommits: true,
         log: "error: three",
         rawLog: `raw/${branch}`,
-        pullRequest: `https://pr/${branch}`,
       },
     ]);
     assert.equal(agents.feedback.length, 3);
-    assert.deepEqual(calls.slice(-5), [
-      `close ${branch}`,
-      "relabel #1: -ready-for-agent +ready-for-human",
-      `push ${branch}`,
-      `open PR ${branch}`,
-      "comment on #1",
+    assert.deepEqual(calls.slice(-3), [`close ${branch}`, "relabel #1: -ready-for-agent +ready-for-human", "comment on #1"]);
+    assert.deepEqual(tracker.pushed, []);
+    assert.deepEqual(tracker.pullRequests, []);
+    assert.deepEqual(tracker.comments, [
+      [
+        "Handed off to a human: the Attempt budget (3) ran out without a green Test run.",
+        "Feedback from the last Attempt (Test run output filtered; raw log on the Host: `raw/issue/1-issue-1`):\n\n```text\nerror: three\n```",
+        "The branch `issue/1-issue-1` and its worktree stay on the Host; nothing is pushed.",
+        "To requeue for the loop: remove the local `issue/1-issue-1` branch and its worktree, relabel the issue `ready-for-agent`.",
+      ].join("\n\n"),
     ]);
-    assert.equal(tracker.pullRequests[0]?.title, "[#1] - Handoff: Issue 1");
-    assert.match(tracker.pullRequests[0]?.body ?? "", /^Refs #1\.[\s\S]*Attempt budget[\s\S]*raw\/issue\/1-issue-1[\s\S]*error: three/);
-    assert.match(tracker.comments[0] ?? "", /To requeue for the loop: close the PR, delete `issue\/1-issue-1` on GitHub, remove the local/);
-    assert.match(tracker.comments[0] ?? "", /Attempt budget[\s\S]*https:\/\/pr\/issue\/1-issue-1/);
-    assert.doesNotMatch(tracker.comments[0] ?? "", /error: three/);
   });
 
-  test("three failed Attempts with no commits hand off with the log in the comment and no PR", async () => {
+  test("three failed Attempts with no commits hand off the same way", async () => {
     const { sut, tracker, calls } = makeSUT({
       issues: [issue(1)],
       runs: { 1: [{ dirty: true, commits: 0 }, { dirty: true, commits: 0 }, { dirty: true, commits: 0 }] },
@@ -313,13 +329,18 @@ describe("runAfkLoop", () => {
 
     const outcomes = await sut.run();
 
-    assert.deepEqual(outcomes, [
-      { issue: 1, kind: "handoff", branch: "issue/1-issue-1", reason: "attempt-budget", hasCommits: false, log: dirtyFeedback },
-    ]);
+    assert.deepEqual(outcomes, [{ issue: 1, kind: "handoff", branch: "issue/1-issue-1", reason: "attempt-budget", log: dirtyFeedback }]);
     assert.deepEqual(tracker.pushed, []);
     assert.deepEqual(tracker.pullRequests, []);
     assert.deepEqual(calls.slice(-2), ["relabel #1: -ready-for-agent +ready-for-human", "comment on #1"]);
-    assert.match(tracker.comments[0] ?? "", /uncommitted work, in its local worktree[\s\S]*Commit all changes[\s\S]*To requeue for the loop: remove the local/);
+    assert.deepEqual(tracker.comments, [
+      [
+        "Handed off to a human: the Attempt budget (3) ran out without a green Test run.",
+        `Feedback from the last Attempt:\n\n\`\`\`text\n${dirtyFeedback}\n\`\`\``,
+        "The branch `issue/1-issue-1` and its worktree stay on the Host; nothing is pushed.",
+        "To requeue for the loop: remove the local `issue/1-issue-1` branch and its worktree, relabel the issue `ready-for-agent`.",
+      ].join("\n\n"),
+    ]);
   });
 
   test("a dirty last Attempt hands off with the commit feedback", async () => {
@@ -333,9 +354,7 @@ describe("runAfkLoop", () => {
         kind: "handoff",
         branch: "issue/1-issue-1",
         reason: "attempt-budget",
-        hasCommits: true,
         log: dirtyFeedback,
-        pullRequest: "https://pr/issue/1-issue-1",
       },
     ]);
   });
@@ -351,27 +370,10 @@ describe("runAfkLoop", () => {
         kind: "handoff",
         branch: "issue/1-issue-1",
         reason: "attempt-budget",
-        hasCommits: true,
         log: `${dirtyFeedback}\n\nThe Test run before it reported:\n\nerror: two`,
         rawLog: "raw/issue/1-issue-1",
-        pullRequest: "https://pr/issue/1-issue-1",
       },
     ]);
-  });
-
-  test("a failed Handoff PR still comments the details and the pushed branch, and the loop moves on", async () => {
-    const { sut, agents, tracker, calls } = makeSUT({
-      issues: [issue(1), issue(2)],
-      runs: { 1: [{ dirty: true }, { dirty: true }, { dirty: true }] },
-      pullRequestFails: true,
-    });
-
-    const outcomes = await sut.run();
-
-    assert.equal(outcomes[0]?.kind, "handoff");
-    assert.ok(calls.includes("relabel #1: -ready-for-agent +ready-for-human"));
-    assert.match(tracker.comments[0] ?? "", /is pushed; opening its PR failed[\s\S]*Commit all changes[\s\S]*To requeue for the loop: delete/);
-    assert.deepEqual(agents.startedIssues, [1, 2]);
   });
 
   test("a Handoff log too long for GitHub is truncated", async () => {
@@ -380,7 +382,7 @@ describe("runAfkLoop", () => {
 
     await sut.run();
 
-    const body = tracker.pullRequests[0]?.body ?? "";
+    const body = tracker.comments[0] ?? "";
     assert.ok(body.length < 65_536);
     assert.match(body, /… truncated\n```\n/);
   });
@@ -391,7 +393,7 @@ describe("runAfkLoop", () => {
 
     await sut.run();
 
-    assert.match(tracker.pullRequests[0]?.body ?? "", /\n````text\nerror: ```swift\n@someone ``` mention\n````/);
+    assert.match(tracker.comments[0] ?? "", /\n````text\nerror: ```swift\n@someone ``` mention\n````/);
   });
 
   test("the loop moves on to the next Eligible issue after a Handoff", async () => {
@@ -641,7 +643,6 @@ interface Fixture {
   runs?: Record<number, Run[]>;
   testRunResults?: (string | null)[];
   pushFails?: boolean;
-  pullRequestFails?: boolean;
   rejectedReviews?: number;
   linkedIssues?: LinkedIssue[];
 }
@@ -653,6 +654,7 @@ interface Run {
   platforms?: Platform[];
   openFindings?: OpenFinding[];
   pullRequestDraft?: string;
+  reply?: string;
 }
 
 function makeSUT(fixture: Fixture) {
@@ -717,7 +719,6 @@ class SpyTracker implements Tracker {
   }
 
   async openPullRequest(pullRequest: PullRequest) {
-    if (this.fixture.pullRequestFails) throw new Error("pull request rejected");
     this.calls.push(`open PR ${pullRequest.branch}`);
     this.pullRequests.push(pullRequest);
     return `https://pr/${pullRequest.branch}`;
@@ -789,6 +790,7 @@ class SpyAgents implements Agents {
         this.calls.push("implement");
         this.feedback.push(feedback);
         agentRun();
+        return { reply: run().reply ?? "", log: `logs/implementer-${this.feedback.length}` };
       },
       review: async (feedback) => {
         this.calls.push("review");

@@ -91,9 +91,10 @@ The Implementer has no diff to route on yet, so its prompt names every platform'
 - A branch touching build configuration (package manifests, project files, build scripts) is tested and pushed like any other: none of it runs on the Host.
 - After every agent run the Host fetches the Sandbox's commits as a git bundle onto the local branch, subject and hash unchanged. Uncommitted changes left in the Sandbox are a failed Attempt.
 - The Sandbox is deleted when the issue's run ends; one left by an interrupted run is deleted at the next loop start.
-- Handoff: the issue moves from `ready-for-agent` to `ready-for-human` and gets a comment, then the loop moves on.
-  - Attempt budget spent: the branch is pushed as a `[#n] - Handoff: …` PR that `Refs` the issue and holds the last Attempt's filtered feedback; if it ran out in review, the last green commit too. With no commits, or if the PR fails, the feedback goes in the comment.
-  - To requeue: close the PR, delete the branch on GitHub and locally (with its worktree), relabel the issue `ready-for-agent`.
+- Handoff: the issue moves from `ready-for-agent` to `ready-for-human` and gets one comment, then the loop moves on. The branch and its worktree stay on the Host; nothing is pushed and no PR is opened.
+  - Two causes: the Attempt budget is spent, or an Implementer run ends with a clean worktree and no commits. The second is a Handoff at once, with no further run.
+  - The comment: why, the last Attempt's filtered feedback with the raw log's path (for no commits, the Implementer's last reply with its log's path), the branch's name, the steps to requeue.
+  - To requeue: remove the local branch and its worktree, relabel the issue `ready-for-agent`.
 - Logs, on the Host: the project's `.sandcastle/logs/` (Implementer and Reviewer runs, raw Test run output in `<branch>-test-run.log`).
 
 ## Tests

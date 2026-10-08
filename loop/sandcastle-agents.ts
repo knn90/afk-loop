@@ -170,7 +170,8 @@ export function sandcastleAgents(loop: Loop, host: Host): Agents {
       return {
         exec: sandbox.exec,
         async implement(feedback) {
-          await runAgent("Implementer", implementerPrompt(loop, issue, branch, feedback));
+          const run = await runAgent("Implementer", implementerPrompt(loop, issue, branch, feedback));
+          return { reply: run.output, log: run.log };
         },
         async review(feedback) {
           const changed = await platformsChangedBetween(host, loop.platforms, base, `refs/heads/${branch}`);
