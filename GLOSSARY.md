@@ -28,10 +28,7 @@ _Avoid_: follow-up PR
 The Sandbox agent that writes the tests and code for one Eligible issue, and that judges and works the comments of a Revision.
 
 **Reviewer**:
-The Sandbox agent that reviews the Implementer's branch against the issue and coding standards, and fixes what it finds.
-
-**Drafter**:
-The Sandbox agent that drafts the PR body for a branch the Reviewer left green. It changes no file.
+The Sandbox agent that reviews the Implementer's branch against the issue and coding standards, fixes what it finds, and drafts the PR body.
 
 **Open finding**:
 A finding the Reviewer left unfixed that the maintainer must decide. An unfixed finding the issue itself settles, or that belongs to a later issue, is not open.

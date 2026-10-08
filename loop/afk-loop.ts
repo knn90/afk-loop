@@ -105,13 +105,13 @@ export interface Session {
 export interface IssueSession extends Session {
   implement(feedback?: string): Promise<void>;
   review(feedback?: string): Promise<Review>;
-  draft(testRun: string): Promise<string | undefined>;
 }
 
 export interface Review {
   readonly log: string;
   readonly openFindings: boolean;
   readonly unfixedFindings?: string;
+  readonly pullRequestDraft?: string;
 }
 
 export interface RevisionRun {
@@ -189,7 +189,6 @@ export interface AfkLoopOptions {
 
 export const defaultCap = 5;
 const priorities = ["priority:p0", "priority:p1", "priority:p2"];
-const draftRuns = 2;
 const implementedBy = "Implemented by the AFK loop's Implementer in the Sandbox.";
 const reviewedBy = "Reviewed by the AFK loop's Reviewer in the Sandbox; its fixes, if any, are on the branch.";
 const allFixed = "It left no finding unfixed.";
@@ -266,21 +265,10 @@ async function runSession(issue: Issue, loop: AfkLoopOptions): Promise<Outcome> 
   const branch = branchName(issue);
   const session = await loop.agents.start(issue, branch);
   try {
-    const outcome = await spendAttempts(issue, branch, session, loop.testRunner);
-    if (outcome.kind !== "pull-request") return outcome;
-    const pullRequestDraft = await draftPullRequest(session, verifiedLine(loop.platforms, outcome.platforms));
-    return pullRequestDraft ? { ...outcome, pullRequestDraft } : outcome;
+    return await spendAttempts(issue, branch, session, loop.testRunner);
   } finally {
     await session.close();
   }
-}
-
-async function draftPullRequest(session: IssueSession, verified: string): Promise<string | undefined> {
-  for (let run = 0; run < draftRuns; run += 1) {
-    const draft = await session.draft(verified).catch(() => undefined);
-    if (draft) return draft;
-  }
-  return undefined;
 }
 
 async function spendAttempts(issue: Issue, branch: string, session: IssueSession, testRunner: TestRunner): Promise<Outcome> {
@@ -292,6 +280,7 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
   const reviewLogs: string[] = [];
   let openFindings = false;
   let unfixedFindings: string | undefined;
+  let pullRequestDraft: string | undefined;
   const fail = (nextFeedback: string) => {
     feedback = nextFeedback;
     failures += 1;
@@ -300,6 +289,7 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
     if (lastGreenHead) {
       const review = await session.review(feedback);
       reviewLogs.push(review.log);
+      ({ pullRequestDraft } = review);
       if (!feedback) ({ openFindings, unfixedFindings } = review);
     } else await session.implement(feedback);
 
@@ -313,7 +303,7 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
       fail(lostCommitsFeedback(lastGreenHead));
       continue;
     }
-    const reviewed: Outcome = { issue: issue.number, kind: "pull-request", branch, reviewLogs, platforms: worktree.platforms, openFindings, ...(unfixedFindings ? { unfixedFindings } : {}) };
+    const reviewed: Outcome = { issue: issue.number, kind: "pull-request", branch, reviewLogs, platforms: worktree.platforms, openFindings, ...(unfixedFindings ? { unfixedFindings } : {}), ...(pullRequestDraft ? { pullRequestDraft } : {}) };
     if (worktree.head === lastGreenHead) return reviewed;
     if (worktree.head === lastFailure?.head) {
       fail(`${unchangedHeadFeedback}\n\n${lastFailure.log}`);

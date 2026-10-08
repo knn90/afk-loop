@@ -22,6 +22,10 @@ export function unfixedFindings(reply: string): string | undefined {
   return lastBlock(reply, "unfixed-findings");
 }
 
+export function pullRequestDraft(reply: string): string | undefined {
+  return lastBlock(reply, "pr-body");
+}
+
 export function reviewerPrompt({ project, issue, branch, base, standards, feedback }: ReviewBrief): string {
   const task = feedback
     ? `- Your review of this branch is done and its fixes are committed (\`git log ${base}..HEAD\`). Fix only what <host-feedback> reports.`
@@ -47,9 +51,12 @@ ${standards.length > 0 ? standards.join("\n\n") : `None apply: this branch ${cha
 How to work:
 
 ${task}
+- Then invoke the \`${skill("pr")}\` skill with the Skill tool and draft the PR body for \`git diff ${base}...HEAD\` as your commits leave it.
+  - The draft starts at \`## Summary\` and names other issues as \`Refs #n\`. The Host puts \`Closes #${issue.number}.\` above it and its own lines below it.
+  - Evidence: quote only output of commands you run in this Sandbox. The Host adds what the Test run verified.
 - ${glossaryRule} Follow docs/agents/git-conventions.md.
 ${sandboxLimits(project)}
 - Commit every fix on this branch as \`[#${issue.number}] - Imperative summary\`.
 
-Done means ${done}, ${doneTail}`;
+Done means ${done}, the draft is in your reply between \`<pr-body>\` and \`</pr-body>\`, ${doneTail}`;
 }

@@ -79,17 +79,17 @@ The Test run and the Reviewer's standards follow what the branch changes against
 The Implementer has no diff to route on yet, so its prompt names every platform's standards file, to follow by folder.
 
 - A Reviewer with no new commits skips the re-test: that commit is already green.
-- The PR body: `Closes #n.`, then the Drafter's draft, then the Host's own lines: who worked it, the unfixed findings, what the Test run verified.
-  - The Drafter runs once the Reviewer's branch is green, on the `mattpocock-skills:pr` skill; the draft is the last `<pr-body>` block of its reply.
-  - A run with no draft is repeated once; after that the Host's lines stand alone.
-  - The Host turns a closing keyword in the draft (`Fixes #n`) into `Refs #n`, and keeps the branch at the tested commit whatever the Drafter does.
+- The PR body: `Closes #n.`, then the Reviewer's draft, then the Host's own lines: who worked it, the unfixed findings, what the Test run verified.
+  - The Reviewer drafts it with the `mattpocock-skills:pr` skill; the draft is the last `<pr-body>` block of its last run's reply.
+  - With no draft the Host's lines stand alone.
+  - The Host turns a closing keyword in the draft (`Fixes #n`) into `Refs #n`.
 - A branch touching build configuration (package manifests, project files, build scripts) is tested and pushed like any other: none of it runs on the Host.
 - After every agent run the Host fetches the Sandbox's commits as a git bundle onto the local branch, subject and hash unchanged. Uncommitted changes left in the Sandbox are a failed Attempt.
 - The Sandbox is deleted when the issue's run ends; one left by an interrupted run is deleted at the next loop start.
 - Handoff: the issue moves from `ready-for-agent` to `ready-for-human` and gets a comment, then the loop moves on.
   - Attempt budget spent: the branch is pushed as a `[#n] - Handoff: …` PR that `Refs` the issue and holds the last Attempt's filtered feedback; if it ran out in review, the last green commit too. With no commits, or if the PR fails, the feedback goes in the comment.
   - To requeue: close the PR, delete the branch on GitHub and locally (with its worktree), relabel the issue `ready-for-agent`.
-- Logs, on the Host: the project's `.sandcastle/logs/` (Implementer, Reviewer and Drafter runs, raw Test run output in `<branch>-test-run.log`).
+- Logs, on the Host: the project's `.sandcastle/logs/` (Implementer and Reviewer runs, raw Test run output in `<branch>-test-run.log`).
 
 ### Revision
 
