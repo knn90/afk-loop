@@ -23,7 +23,7 @@ The Sandbox agent that writes the tests and code for one Eligible issue.
 The Sandbox agent that reviews the Implementer's branch against the issue and coding standards, fixes what it finds, and drafts the PR body.
 
 **Open finding**:
-A finding the Reviewer left unfixed that the maintainer must decide. An unfixed finding the issue itself settles, or that belongs to a later issue, is not open.
+A finding the Reviewer left unfixed: the maintainer must decide it. It is posted as a PR review comment. A real problem outside the issue's work is one; a point the issue itself settles is not a finding.
 _Avoid_: declined finding
 
 **Platform**:

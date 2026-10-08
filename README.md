@@ -70,7 +70,7 @@ Passes when the Host reads an issue with `GH_TOKEN`, the Sandbox has no GitHub t
 npx --prefix .sandcastle afk-loop run [--cap 5]
 ```
 
-Works Eligible issues, one at a time, up to the cap. It never merges a PR: merging is the maintainer's, so an issue with an open blocker is worked in a later run, once the blocker's PR is merged. A run stops early only on an error. An Eligible issue: a fresh Sandbox (a Tart VM cloned from `<name>-base`, holding a copy of the repo), an Opus Implementer in it on `issue/<n>-<slug>`, then a Test run the loop executes in the same Sandbox. Failures go back to the Implementer. Once green, an Opus Reviewer in the same Sandbox runs the code-review skill against the issue and the coding standards (as on the base branch), then reviews its design with the codebase-design skill, commits its fixes, and the loop re-tests; failures go back to the Reviewer, which then fixes only those. Both agents share the Attempt budget. The reviewed, green branch is pushed as a `ready-for-human` PR listing the findings the Reviewer left unfixed, each with its reason.
+Works Eligible issues, one at a time, up to the cap. It never merges a PR: merging is the maintainer's, so an issue with an open blocker is worked in a later run, once the blocker's PR is merged. A run stops early only on an error. An Eligible issue: a fresh Sandbox (a Tart VM cloned from `<name>-base`, holding a copy of the repo), an Opus Implementer in it on `issue/<n>-<slug>`, then a Test run the loop executes in the same Sandbox. Failures go back to the Implementer. Once green, an Opus Reviewer in the same Sandbox runs the code-review skill against the issue and the coding standards (as on the base branch), then reviews its design with the codebase-design skill, commits its fixes, and the loop re-tests; failures go back to the Reviewer, which then fixes only those. Both agents share the Attempt budget. The reviewed, green branch is pushed as a `ready-for-human` PR, and the findings the Reviewer left unfixed, its Open findings, are posted on it as one PR review.
 
 The Sandbox has no GitHub access, so the Host pastes into each agent's prompt every issue the issue body names (title, body, the maintainer's comments), except those under its Parent and Blocked by headings; the limits are in `loop/linked-issues.ts`.
 
@@ -79,10 +79,15 @@ The Test run and the Reviewer's standards follow what the branch changes against
 The Implementer has no diff to route on yet, so its prompt names every platform's standards file, to follow by folder.
 
 - A Reviewer with no new commits skips the re-test: that commit is already green.
-- The PR body: `Closes #n.`, then the Reviewer's draft, then the Host's own lines: who worked it, the unfixed findings, what the Test run verified.
+- The PR body: `Closes #n.`, then the Reviewer's draft, then the Host's own lines: who worked it, how many Open findings were posted (or that there were none), what the Test run verified.
   - The Reviewer drafts it with the `mattpocock-skills:pr` skill; the draft is the last `<pr-body>` block of its last run's reply.
   - With no draft the Host's lines stand alone.
   - The Host turns a closing keyword in the draft (`Fixes #n`) into `Refs #n`.
+- Open findings: after opening the PR the Host posts them as one PR review, submitted as a comment. No Open finding: no review.
+  - A finding with a path and a line on the new side of the diff is an inline comment on that line; one without is in the review's body.
+  - If GitHub rejects the review, the Host posts it again with every finding in the body, each after its path and line.
+  - Each comment starts with the loop's marker and a line naming the AFK loop's Reviewer, so it is told from the maintainer's own and stays out of the issues pasted into prompts.
+  - The Reviewer returns them in the last `<open-findings>` block of its review reply, one `<finding>` each. A point the issue's own text settles is not reported; a real problem outside the issue's work is.
 - A branch touching build configuration (package manifests, project files, build scripts) is tested and pushed like any other: none of it runs on the Host.
 - After every agent run the Host fetches the Sandbox's commits as a git bundle onto the local branch, subject and hash unchanged. Uncommitted changes left in the Sandbox are a failed Attempt.
 - The Sandbox is deleted when the issue's run ends; one left by an interrupted run is deleted at the next loop start.

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
   runAfkLoop,
+  type OpenFinding,
+  type PullRequestReview,
   type Agents,
   type Backlog,
   type Issue,
@@ -76,7 +78,7 @@ describe("runAfkLoop", () => {
 
     const outcomes = await sut.run();
 
-    assert.deepEqual(outcomes, [{ issue: 12, kind: "pull-request", branch, reviewLogs: ["logs/review-1"], platforms: [web], openFindings: false }]);
+    assert.deepEqual(outcomes, [{ issue: 12, kind: "pull-request", branch, reviewLogs: ["logs/review-1"], platforms: [web], openFindings: [] }]);
     assert.deepEqual(calls, [
       `start ${branch}`,
       "implement",
@@ -92,7 +94,7 @@ describe("runAfkLoop", () => {
     ]);
     assert.equal(tracker.pullRequests[0]?.title, "[#12] - AFK loop tracer: pick issue → PR");
     assert.equal(tracker.pullRequests[0]?.label, "ready-for-human");
-    assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #12\.[\s\S]*Reviewer[\s\S]*`logs\/review-1`\. It left no finding unfixed\.\n/);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #12\.[\s\S]*Reviewer[\s\S]*`logs\/review-1`\. It left no Open finding\.\n/);
   });
 
   test("a Leftover is discarded before the issue is redone", async () => {
@@ -138,7 +140,7 @@ describe("runAfkLoop", () => {
 
     const outcomes = await sut.run();
 
-    assert.deepEqual(outcomes, [{ issue: 1, kind: "pull-request", branch: "issue/1-issue-1", reviewLogs: ["logs/review-1"], platforms: [web], openFindings: false }]);
+    assert.deepEqual(outcomes, [{ issue: 1, kind: "pull-request", branch: "issue/1-issue-1", reviewLogs: ["logs/review-1"], platforms: [web], openFindings: [] }]);
     assert.deepEqual(agents.feedback, [undefined, "error: boom"]);
     assert.equal(testRuns(calls), 3);
   });
@@ -504,6 +506,97 @@ describe("runAfkLoop, PR body", () => {
   });
 });
 
+describe("runAfkLoop, Open findings", () => {
+  const onLine: OpenFinding = { text: "The streak resets at UTC midnight.", at: { path: "web/src/streak.ts", line: 12 } };
+  const noLine: OpenFinding = { text: "No test covers a skipped day.\nAdd one?" };
+  const reviewerSays = "<!-- afk-loop -->\n**The AFK loop's Reviewer:**";
+
+  test("are posted as one review after the PR is opened: inline with a line, in the body without", async () => {
+    const { sut, tracker, calls } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { openFindings: [onLine, noLine] }] } });
+    const branch = "issue/1-issue-1";
+
+    await sut.run();
+
+    assert.deepEqual(calls.slice(-3), [`open PR ${branch}`, "relabel #1: -ready-for-agent", `post review https://pr/${branch}`]);
+    assert.deepEqual(tracker.reviews, [
+      {
+        body: `${reviewerSays}\n\n- No test covers a skipped day.\n  Add one?`,
+        comments: [{ path: "web/src/streak.ts", line: 12, body: `${reviewerSays}\n\nThe streak resets at UTC midnight.` }],
+      },
+    ]);
+  });
+
+  test("all on a line: the review has no body", async () => {
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { openFindings: [onLine] }] } });
+
+    await sut.run();
+
+    assert.equal(tracker.reviews[0]?.body, "");
+    assert.equal(tracker.reviews[0]?.comments.length, 1);
+  });
+
+  test("none: no review is posted, and the PR body says so", async () => {
+    const { sut, tracker, calls } = makeSUT({ issues: [issue(1)] });
+
+    await sut.run();
+
+    assert.deepEqual(tracker.reviews, []);
+    assert.ok(!calls.some((call) => call.startsWith("post review")));
+    assert.match(tracker.pullRequests[0]?.body ?? "", /Its logs on the Host: `[^`\n]+`\. It left no Open finding\.\n\n/);
+  });
+
+  test("a rejected review is posted again with every finding in the body, each after its path and line", async () => {
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { openFindings: [onLine, noLine] }] }, rejectedReviews: 1 });
+
+    const outcomes = await sut.run();
+
+    assert.equal(outcomes[0]?.kind, "pull-request");
+    assert.equal(tracker.reviews.length, 2);
+    assert.deepEqual(tracker.reviews[1], {
+      body: `${reviewerSays}\n\n- \`web/src/streak.ts:12\`: The streak resets at UTC midnight.\n- No test covers a skipped day.\n  Add one?`,
+      comments: [],
+    });
+  });
+
+  test("a review rejected twice is an error, and the run stops", async () => {
+    const { sut, tracker, agents } = makeSUT({ issues: [issue(1), issue(2)], runs: { 1: [{}, { openFindings: [onLine] }] }, rejectedReviews: 2 });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes, [{ issue: 1, kind: "error", message: "Error: review rejected" }]);
+    assert.equal(tracker.reviews.length, 2);
+    assert.deepEqual(agents.startedIssues, [1]);
+  });
+
+  test("the PR body counts the findings posted and lists none of them", async () => {
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { openFindings: [onLine, noLine] }] } });
+
+    await sut.run();
+
+    const body = tracker.pullRequests[0]?.body ?? "";
+    assert.match(body, /Its logs on the Host: `[^`\n]+`\. It posted 2 Open findings as review comments on this PR\.\n\n/);
+    assert.ok(!body.includes("UTC midnight"));
+    assert.ok(!body.includes("skipped day"));
+  });
+
+  test("one finding is counted in the singular", async () => {
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { openFindings: [noLine] }] } });
+
+    await sut.run();
+
+    assert.match(tracker.pullRequests[0]?.body ?? "", /It posted 1 Open finding as review comments on this PR\./);
+  });
+
+  test("the review's findings are posted, not those of a run that fixed a failed Test run", async () => {
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { openFindings: [noLine] }, {}] }, testRunResults: [green, "error: boom", green] });
+
+    await sut.run();
+
+    assert.equal(tracker.reviews.length, 1);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /It posted 1 Open finding /);
+  });
+});
+
 describe("runAfkLoop, routing", () => {
   test("the Test run covers the platforms the branch changes, and the PR says what was verified", async () => {
     const { sut, tracker, testRunner } = makeSUT({ issues: [issue(1)], runs: { 1: [{ platforms: [server] }, { platforms: [web, server] }] } });
@@ -549,6 +642,7 @@ interface Fixture {
   testRunResults?: (string | null)[];
   pushFails?: boolean;
   pullRequestFails?: boolean;
+  rejectedReviews?: number;
   linkedIssues?: LinkedIssue[];
 }
 
@@ -557,8 +651,7 @@ interface Run {
   movesHead?: boolean;
   dirty?: boolean;
   platforms?: Platform[];
-  openFindings?: boolean;
-  unfixedFindings?: string;
+  openFindings?: OpenFinding[];
   pullRequestDraft?: string;
 }
 
@@ -593,6 +686,7 @@ class SpyTracker implements Tracker {
   pushedBranches: string[];
   pushed: string[] = [];
   pullRequests: PullRequest[] = [];
+  reviews: PullRequestReview[] = [];
   comments: string[] = [];
 
   constructor(
@@ -627,6 +721,12 @@ class SpyTracker implements Tracker {
     this.calls.push(`open PR ${pullRequest.branch}`);
     this.pullRequests.push(pullRequest);
     return `https://pr/${pullRequest.branch}`;
+  }
+
+  async postReview(pullRequest: string, review: PullRequestReview) {
+    this.calls.push(`post review ${pullRequest}`);
+    this.reviews.push(review);
+    if (this.reviews.length <= (this.fixture.rejectedReviews ?? 0)) throw new Error("review rejected");
   }
 
   async comment(issueNumber: number, body: string) {
@@ -694,8 +794,8 @@ class SpyAgents implements Agents {
         this.calls.push("review");
         this.reviewFeedback.push(feedback);
         agentRun();
-        const { openFindings = false, unfixedFindings, pullRequestDraft } = run();
-        return { log: `logs/review-${this.reviewFeedback.length}`, openFindings, unfixedFindings, pullRequestDraft };
+        const { openFindings = [], pullRequestDraft } = run();
+        return { log: `logs/review-${this.reviewFeedback.length}`, openFindings, pullRequestDraft };
       },
       inspect: async () => {
         this.calls.push("inspect");
