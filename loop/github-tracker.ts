@@ -1,5 +1,5 @@
 import { issueNumberOf, type Issue, type LinkedIssue, type RevisionPullRequest, type Tracker } from "./afk-loop.js";
-import { check, gh, ghWithInput, lines, repoUrl, type Host } from "./host.js";
+import { gh, ghWithInput, lines, repoUrl, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
 import { readyForAgent } from "./loop-rules.js";
 import { hasWriteAccess, isLoopComment, openReviewComments, revisionNumber, type AuthoredComment } from "./review-comments.js";
@@ -129,17 +129,6 @@ function pushedBranches(repo: string): string[] {
   return lines(gh("api", "--paginate", `repos/${repo}/branches?per_page=100`, "--jq", ".[].name"));
 }
 
-const pollMs = 2000;
-const pollLimit = 30;
-
-async function waitWhile(pending: string, read: () => string): Promise<string> {
-  for (let polls = 1; ; polls += 1) {
-    const value = read().trim();
-    if (value !== pending || polls >= pollLimit) return value;
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-}
-
 export function githubTracker({ repo, baseBranch }: Loop, host: Host): Tracker {
   return {
     async backlog() {
@@ -185,16 +174,6 @@ export function githubTracker({ repo, baseBranch }: Loop, host: Host): Tracker {
     async postReview(pullRequest, { body, comments }) {
       const review = { event: "COMMENT", body, comments: comments.map(({ path, line, body }) => ({ path, line, side: "RIGHT", body })) };
       ghWithInput(JSON.stringify(review), "api", "--method", "POST", `repos/${repo}/pulls/${pullRequest.split("/").at(-1)}/reviews`, "--input", "-");
-    },
-
-    async mergePullRequest(pullRequest, closes) {
-      const mergeable = await waitWhile("UNKNOWN", () => gh("pr", "view", pullRequest, "--json", "mergeable", "--jq", ".mergeable"));
-      if (mergeable === "CONFLICTING") return "conflict";
-      check(mergeable === "MERGEABLE", `GitHub reports ${pullRequest} as ${mergeable}, not merged`);
-      gh("pr", "merge", pullRequest, "--merge");
-      const state = await waitWhile("OPEN", () => gh("issue", "view", String(closes), "-R", repo, "--json", "state", "--jq", ".state"));
-      check(state !== "OPEN", `${pullRequest} is merged but #${closes} is still open`);
-      return "merged";
     },
 
     async comment(issueOrPullRequest, body) {

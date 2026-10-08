@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { Issue } from "./afk-loop.js";
-import { drafterPrompt } from "./drafter-prompt.js";
 import { implementerPrompt } from "./implementer-prompt.js";
 import type { Platform } from "./platforms.js";
 import { reviewerPrompt } from "./reviewer-prompt.js";
@@ -35,7 +34,6 @@ function everyPrompt(): string[] {
     implementerPrompt(project, issue, branch),
     reviewerPrompt({ project, issue, branch, base, standards: [] }),
     reviewerPrompt({ project, issue, branch, base, standards: [], feedback: "error: boom" }),
-    drafterPrompt({ repo: project.repo, issue, branch, base, testRun: "passed" }),
     revisionPrompt({ project, issue, pullRequest: 21, branch, base, comments: [{ id: "C1", kind: "conversation", author: "knn90", body: "Rename.", replies: [] }] }),
   ];
 }

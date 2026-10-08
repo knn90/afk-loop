@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { Issue } from "./afk-loop.js";
 import type { Platform } from "./platforms.js";
-import { openFindings, reviewerPrompt } from "./reviewer-prompt.js";
+import { openFindings, pullRequestDraft, reviewerPrompt } from "./reviewer-prompt.js";
 
 describe("reviewerPrompt", () => {
   test("reads the glossary, and the glossary map when it exists", () => {
@@ -130,13 +130,73 @@ describe("reviewerPrompt", () => {
 });
 
 describe("reviewerPrompt, PR body", () => {
-  test("a review drafts no PR body: that is the Drafter's", () => {
+  test("a review drafts the PR body with the pr skill, after its fixes", () => {
     const sut = makeSUT();
 
     const prompt = sut.prompt();
 
-    assert.ok(!prompt.includes("pr-body"));
-    assert.match(prompt, /Done means every finding is fixed or answered, all committed/);
+    assert.match(prompt, /invoke the `mattpocock-skills:pr` skill with the Skill tool and draft the PR body for `git diff abc123\.\.\.HEAD`/);
+    assert.ok(prompt.indexOf("Fix every Spec, Standards and Design finding") < prompt.indexOf("`mattpocock-skills:pr` skill"));
+    assert.match(prompt, /Done means every finding is fixed or answered, the draft is in your reply between `<pr-body>` and `<\/pr-body>`, all committed/);
+  });
+
+  test("a run with host feedback drafts the PR body too", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt("error: boom");
+
+    assert.match(prompt, /`mattpocock-skills:pr` skill/);
+    assert.match(prompt, /Done means every failure in <host-feedback> is fixed, the draft is in your reply between `<pr-body>` and `<\/pr-body>`/);
+  });
+
+  test("the draft starts at the Summary and leaves the Closes line to the Host", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt();
+
+    assert.match(prompt, /The draft starts at `## Summary` and names other issues as `Refs #n`\. The Host puts `Closes #7\.` above it/);
+  });
+
+  test("Evidence is output the Reviewer ran itself, the Test run result being the Host's to add", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt();
+
+    assert.match(prompt, /Evidence: quote only output of commands you run in this Sandbox\. The Host adds what the Test run verified\./);
+  });
+});
+
+describe("pullRequestDraft", () => {
+  test("a reply with a draft gives the draft", () => {
+    const sut = makeSUT();
+
+    const draft = sut.pullRequestDraft("Done.\n<pr-body>\n## Summary\n\nShows the Streak badge.\n</pr-body>\n<promise>COMPLETE</promise>");
+
+    assert.equal(draft, "## Summary\n\nShows the Streak badge.");
+  });
+
+  test("a reply with no draft gives none", () => {
+    const sut = makeSUT();
+
+    const draft = sut.pullRequestDraft("Done.");
+
+    assert.equal(draft, undefined);
+  });
+
+  test("the last draft in the reply is the one given", () => {
+    const sut = makeSUT();
+
+    const draft = sut.pullRequestDraft("I put it in `<pr-body>…</pr-body>`.\n<pr-body>## Summary</pr-body>");
+
+    assert.equal(draft, "## Summary");
+  });
+
+  test("an unclosed mention before the draft stays out of it", () => {
+    const sut = makeSUT();
+
+    const draft = sut.pullRequestDraft("The draft goes after `<pr-body>`.\n<pr-body>## Summary</pr-body>");
+
+    assert.equal(draft, "## Summary");
   });
 });
 
@@ -194,6 +254,7 @@ function makeSUT(standards = ["Prefer value types."]) {
   const issue: Issue = { number: 7, title: "Fix streak", body: "Body", labels: [], openBlockers: 0 };
   return {
     openFindings,
+    pullRequestDraft,
     prompt: (feedback?: string) =>
       reviewerPrompt({ project, issue, branch: "issue/7-fix-streak", base: "abc123", standards, feedback }),
   };

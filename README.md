@@ -20,7 +20,7 @@ The config names the project, its repo, the base image, the Smoke issue and the 
 `afk-loop run|smoke|build-image` finds `.sandcastle/loop.config.ts` from the git root of the folder it runs in, so it works from the repo root or any subfolder:
 
 ```bash
-npx --prefix .sandcastle afk-loop run [--cap 5] [--auto-merge]
+npx --prefix .sandcastle afk-loop run [--cap 5]
 npx --prefix .sandcastle afk-loop smoke
 npx --prefix .sandcastle afk-loop build-image
 ```
@@ -67,10 +67,10 @@ Passes when the Host reads an issue with `GH_TOKEN`, the Sandbox has no GitHub t
 ## AFK loop
 
 ```bash
-npx --prefix .sandcastle afk-loop run [--cap 5] [--auto-merge]
+npx --prefix .sandcastle afk-loop run [--cap 5]
 ```
 
-Works Revision PRs, then Eligible issues, one at a time, up to the cap. An Eligible issue: a fresh Sandbox (a Tart VM cloned from `<name>-base`, holding a copy of the repo), an Opus Implementer in it on `issue/<n>-<slug>`, then a Test run the loop executes in the same Sandbox. Failures go back to the Implementer. Once green, an Opus Reviewer in the same Sandbox runs the code-review skill against the issue and the coding standards (as on the base branch), then reviews its design with the codebase-design skill, commits its fixes, and the loop re-tests; failures go back to the Reviewer, which then fixes only those. Both agents share the Attempt budget. The reviewed, green branch is pushed as a `ready-for-human` PR, and the findings the Reviewer left unfixed, its Open findings, are posted on it as one PR review.
+Works Revision PRs, then Eligible issues, one at a time, up to the cap. It never merges a PR: merging is the maintainer's, so an issue with an open blocker is worked in a later run, once the blocker's PR is merged. A run stops early only on an error. An Eligible issue: a fresh Sandbox (a Tart VM cloned from `<name>-base`, holding a copy of the repo), an Opus Implementer in it on `issue/<n>-<slug>`, then a Test run the loop executes in the same Sandbox. Failures go back to the Implementer. Once green, an Opus Reviewer in the same Sandbox runs the code-review skill against the issue and the coding standards (as on the base branch), then reviews its design with the codebase-design skill, commits its fixes, and the loop re-tests; failures go back to the Reviewer, which then fixes only those. Both agents share the Attempt budget. The reviewed, green branch is pushed as a `ready-for-human` PR, and the findings the Reviewer left unfixed, its Open findings, are posted on it as one PR review.
 
 The Sandbox has no GitHub access, so the Host pastes into each agent's prompt every issue the issue body names (title, body, the maintainer's comments), except those under its Parent and Blocked by headings; the limits are in `loop/linked-issues.ts`.
 
@@ -79,10 +79,10 @@ The Test run and the Reviewer's standards follow what the branch changes against
 The Implementer has no diff to route on yet, so its prompt names every platform's standards file, to follow by folder.
 
 - A Reviewer with no new commits skips the re-test: that commit is already green.
-- The PR body: `Closes #n.`, then the Drafter's draft, then the Host's own lines: who worked it, how many Open findings were posted (or that there were none), what the Test run verified.
-  - The Drafter runs once the Reviewer's branch is green, on the `mattpocock-skills:pr` skill; the draft is the last `<pr-body>` block of its reply.
-  - A run with no draft is repeated once; after that the Host's lines stand alone.
-  - The Host turns a closing keyword in the draft (`Fixes #n`) into `Refs #n`, and keeps the branch at the tested commit whatever the Drafter does.
+- The PR body: `Closes #n.`, then the Reviewer's draft, then the Host's own lines: who worked it, how many Open findings were posted (or that there were none), what the Test run verified.
+  - The Reviewer drafts it with the `mattpocock-skills:pr` skill; the draft is the last `<pr-body>` block of its last run's reply.
+  - With no draft the Host's lines stand alone.
+  - The Host turns a closing keyword in the draft (`Fixes #n`) into `Refs #n`.
 - Open findings: after opening the PR the Host posts them as one PR review, submitted as a comment. No Open finding: no review.
   - A finding with a path and a line on the new side of the diff is an inline comment on that line; one without is in the review's body.
   - If GitHub rejects the review, the Host posts it again with every finding in the body, each after its path and line.
@@ -94,18 +94,7 @@ The Implementer has no diff to route on yet, so its prompt names every platform'
 - Handoff: the issue moves from `ready-for-agent` to `ready-for-human` and gets a comment, then the loop moves on.
   - Attempt budget spent: the branch is pushed as a `[#n] - Handoff: …` PR that `Refs` the issue and holds the last Attempt's filtered feedback; if it ran out in review, the last green commit too. With no commits, or if the PR fails, the feedback goes in the comment.
   - To requeue: close the PR, delete the branch on GitHub and locally (with its worktree), relabel the issue `ready-for-agent`.
-- Logs, on the Host: the project's `.sandcastle/logs/` (Implementer, Reviewer and Drafter runs, raw Test run output in `<branch>-test-run.log`).
-
-### Auto-merge
-
-With `--auto-merge` the loop merges each green PR it opens in that run, on any platform, and then picks the next Eligible issue; a chain of issues that block each other runs through without the maintainer. Off by default.
-
-- Green (defined in `GLOSSARY.md`) is read from the Open findings of the Reviewer's review, the Test run on the reviewed commit, and GitHub's `mergeable`.
-- A PR with an open finding, or with no Test run (the branch changes no platform's folder), is handed back as without the flag.
-- A PR that conflicts with the base branch is a Handoff: it stays open as `ready-for-human`, the issue moves to `ready-for-human` with a comment, and the run stops.
-- A spent Attempt budget is the usual Handoff, and the run stops too. So does a Revision's Handoff.
-- Revised PRs are handed back as before.
-- The merge fails as an error, stopping the run, when GitHub can't say the PR is mergeable, refuses the merge, or leaves the issue open after it.
+- Logs, on the Host: the project's `.sandcastle/logs/` (Implementer and Reviewer runs, raw Test run output in `<branch>-test-run.log`).
 
 ### Revision
 
