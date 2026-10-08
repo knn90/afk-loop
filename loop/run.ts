@@ -8,10 +8,10 @@ import { describeRevisionHandoff } from "./revision.js";
 import { sandcastleAgents } from "./sandcastle-agents.js";
 import { routedTestRun } from "./test-run.js";
 
-function report(outcome: Outcome): string {
+export function report(outcome: Outcome): string {
   switch (outcome.kind) {
     case "handoff":
-      return `handoff (${outcome.pullRequest ?? "no PR"}): ${describeHandoff(outcome).why}`;
+      return `handoff: ${describeHandoff(outcome).why}`;
     case "revised":
       return `PR #${outcome.pullRequest} revised, ${outcome.pushed ? "pushed" : "nothing to push"}`;
     case "no-review-comments":

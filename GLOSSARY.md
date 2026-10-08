@@ -56,7 +56,7 @@ The 3 failed Attempts an issue may spend, shared by Implementer and Reviewer. Ea
 _Avoid_: retries, max tries
 
 **Handoff**:
-Returning an issue, or a Revision PR, to the maintainer as `ready-for-human` when the Attempt budget runs out; for a Revision PR, also when `main` no longer merges cleanly. A Handoff does not end the run.
+Returning an issue to the maintainer as `ready-for-human`, with one comment, when the Attempt budget runs out or the Implementer makes no commits. Nothing is pushed. A Revision PR is returned the same way when its Attempt budget runs out or `main` no longer merges cleanly. A Handoff does not end the run.
 _Avoid_: failure, abort
 
 **Leftover**:
