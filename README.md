@@ -87,13 +87,17 @@ The Implementer has no diff to route on yet, so its prompt names every platform'
 - The Reviewer's first run returns the Fixable findings as text for the Implementer, in the last `<fixable-findings>` block of its reply, the Open findings, and, with no Fixable finding, the PR body.
 - The Fix round: one per issue, only when the first run returned a Fixable finding.
   - The Implementer runs with only the Fixable findings as its feedback.
-  - New commits get a Test run. A failure goes back to the Implementer and spends the Attempt budget, shared with the first round. Uncommitted changes are a failed Attempt.
+  - It may leave a finding it judges wrong. It lists each one it left and why in the last `<findings-left>` block of its reply; the Host passes the block of the Fix round's last run to the wrap-up.
+  - New commits get a Test run. A failure goes back to the Implementer, after the Fixable findings, and spends the Attempt budget, shared with the first round. Uncommitted changes are a failed Attempt.
   - No new commits: no Test run.
-- The wrap-up: the second Reviewer run, only after a Fix round. It gets the first run's Fixable and Open findings, and reviews nothing again.
-  - It returns the final Open findings: the first run's, restated against the final diff, and each Fixable finding that was not fixed.
+  - Attempt budget spent in the Fix round is not a Handoff. The Host puts the branch back at the first round's green commit, dropping the Fix round's commits; the wrap-up still runs, on that commit, and the PR opens as usual.
+- The wrap-up: the second Reviewer run, only after a Fix round. It gets the first run's Fixable and Open findings and the findings the Implementer left.
+  - It reviews the Fix round's commits only (the first round's green commit to the head) with the code-review skill, against the same coding standards, with no design review. Every finding there is an Open finding.
+  - It returns the final Open findings: the first run's, restated against the final diff, each Fixable finding that was not fixed, with the Implementer's reason where it gave one, and each finding in the Fix round's commits.
+  - After a Fix round that spent the Attempt budget it reviews nothing, and every Fixable finding becomes an Open finding.
   - It drafts the PR body.
   - What it finds never starts a second Fix round.
-- The PR body: `Closes #n.`, then the Reviewer's draft, then the Host's own lines: who worked it, how many Open findings were posted (or that there were none), what the Test run verified.
+- The PR body: `Closes #n.`, then the Reviewer's draft, then the Host's own lines: who worked it, how many Open findings were posted (or that there were none), that the Fix round failed its Test run and its fixes are not included (when it did), what the Test run verified.
   - The Reviewer drafts it with the `mattpocock-skills:pr` skill; the draft is the last `<pr-body>` block of its last run's reply.
   - With no draft the Host's lines stand alone.
   - The Host turns a closing keyword in the draft (`Fixes #n`) into `Refs #n`.
@@ -106,7 +110,7 @@ The Implementer has no diff to route on yet, so its prompt names every platform'
 - After every agent run the Host fetches the Sandbox's commits as a git bundle onto the local branch, subject and hash unchanged. Uncommitted changes left in the Sandbox are a failed Attempt.
 - The Sandbox is deleted when the issue's run ends; one left by an interrupted run is deleted at the next loop start.
 - Handoff: the issue moves from `ready-for-agent` to `ready-for-human` and gets one comment, then the loop moves on. The branch and its worktree stay on the Host; nothing is pushed and no PR is opened.
-  - Two causes: the Attempt budget is spent, or an Implementer run ends with a clean worktree and no commits. The second is a Handoff at once, with no further run.
+  - Two causes, both in the Implementer's first round: the Attempt budget is spent, or an Implementer run ends with a clean worktree and no commits. The second is a Handoff at once, with no further run.
   - The comment: why, the last Attempt's filtered feedback with the raw log's path (for no commits, the Implementer's last reply with its log's path), the branch's name, the steps to requeue.
   - To requeue: remove the local branch and its worktree, relabel the issue `ready-for-agent`.
 - Logs, on the Host: the project's `.sandcastle/logs/` (Implementer and Reviewer runs, raw Test run output in `<branch>-test-run.log`).

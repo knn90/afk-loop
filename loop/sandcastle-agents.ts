@@ -4,7 +4,7 @@ import { claudeCode, createSandbox } from "@ai-hero/sandcastle";
 import { issueBranchPrefix, type Agents, type Session, type WorktreeState } from "./afk-loop.js";
 import { branchFileName, check, lines, logsDir, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
-import { implementerPrompt } from "./implementer-prompt.js";
+import { findingsLeft, implementerPrompt } from "./implementer-prompt.js";
 import { platformsChanged, type Platform } from "./platforms.js";
 import { completionSignal } from "./prompt-parts.js";
 import { fixableFindings, openFindings, pullRequestDraft, reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
@@ -175,21 +175,23 @@ export function sandcastleAgents(loop: Loop, host: Host): Agents {
         return `issue-${issue.number}-${role.toLowerCase()}-${agentRuns[role]}`;
       };
       const runAgent = (role: keyof typeof agentRuns, prompt: string) => sandbox.runAgent(role, logName(role), prompt);
+      const standards = async () => {
+        const changed = await platformsChangedBetween(host, loop.platforms, base, `refs/heads/${branch}`);
+        return changed.map((platform) => host.git("show", `${base}:${platform.standards}`).trim());
+      };
 
       return {
         exec: sandbox.exec,
-        async implement(feedback) {
-          const run = await runAgent("Implementer", implementerPrompt(loop, issue, branch, feedback));
-          return { reply: run.output, log: run.log };
+        async implement(feedback, fixableFindings) {
+          const run = await runAgent("Implementer", implementerPrompt(loop, issue, branch, feedback, fixableFindings));
+          return { reply: run.output, log: run.log, findingsLeft: findingsLeft(run.output) };
         },
         async review() {
-          const changed = await platformsChangedBetween(host, loop.platforms, base, `refs/heads/${branch}`);
-          const standards = changed.map((platform) => host.git("show", `${base}:${platform.standards}`).trim());
-          const run = await runAgent("Reviewer", reviewerPrompt({ project: loop, issue, branch, base, standards }));
+          const run = await runAgent("Reviewer", reviewerPrompt({ project: loop, issue, branch, base, standards: await standards() }));
           return { log: run.log, fixableFindings: fixableFindings(run.output), openFindings: openFindings(run.output), pullRequestDraft: pullRequestDraft(run.output) };
         },
         async wrapUp(fixRound) {
-          const run = await runAgent("Reviewer", wrapUpPrompt({ project: loop, issue, branch, base, fixRound }));
+          const run = await runAgent("Reviewer", wrapUpPrompt({ project: loop, issue, branch, base, standards: await standards(), fixRound }));
           return { log: run.log, openFindings: openFindings(run.output), pullRequestDraft: pullRequestDraft(run.output) };
         },
         putBack: sandbox.putBack,
