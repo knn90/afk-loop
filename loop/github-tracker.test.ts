@@ -54,6 +54,49 @@ describe("githubTracker", () => {
   });
 });
 
+describe("githubTracker, backlog", () => {
+  const issues = "repos/acme/Habitat/issues?state=open&labels=ready-for-agent";
+  const labels = [{ name: "ready-for-agent" }];
+  const sut = makeSUT({
+    [issues]: JSON.stringify([[{ number: 9, title: "[#4] - Streak", body: "Closes #4.", labels, state: "open", pull_request: {} }]]),
+    "pr list": "[]",
+    "/branches": "",
+  });
+  before(sut.install);
+  after(sut.uninstall);
+
+  test("an open PR labelled ready-for-agent is no work: the backlog holds no issue, and nothing more is asked about the PR", async () => {
+    const tracker = githubTracker(defineLoop(config), hostAt(tmpdir()));
+
+    const backlog = await tracker.backlog();
+
+    assert.deepEqual(backlog.issues, []);
+    assert.deepEqual(sut.calls().map(([command, ...args]) => (command === "api" ? args.find((arg) => arg.startsWith("repos/")) : command)), [
+      `${issues}&per_page=100`,
+      "pr",
+      "repos/acme/Habitat/branches?per_page=100",
+    ]);
+  });
+});
+
+describe("githubTracker, linked issues", () => {
+  const comment = (body: string, author_association: string) => ({ body, author_association });
+  const sut = makeSUT({
+    "issues/5/comments": JSON.stringify([[comment("Use the weekly streak.", "OWNER"), comment("<!-- afk-loop -->\nHanded off to a human.", "OWNER"), comment("Use the daily one.", "NONE")]]),
+    "issues/5": JSON.stringify({ number: 5, title: "Streak rules", body: "Rules.", labels: [], state: "open" }),
+  });
+  before(sut.install);
+  after(sut.uninstall);
+
+  test("a linked issue is briefed with its write-access authors' comments, without the loop's own", async () => {
+    const tracker = githubTracker(defineLoop(config), hostAt(tmpdir()));
+
+    const linked = await tracker.linkedIssues([5]);
+
+    assert.deepEqual(linked, [{ number: 5, title: "Streak rules", body: "Rules.", comments: ["Use the weekly streak."] }]);
+  });
+});
+
 // MARK: - Helpers
 
 const config = {
@@ -63,7 +106,7 @@ const config = {
   platforms: [],
 };
 
-function makeSUT() {
+function makeSUT(responses: Record<string, string> = {}) {
   const bin = mkdtempSync(join(tmpdir(), "fake-gh-"));
   const log = join(bin, "calls.jsonl");
   const inputs = join(bin, "inputs.jsonl");
@@ -79,7 +122,9 @@ if (args.includes("--input")) {
   fs.appendFileSync(${JSON.stringify(inputs)}, input + "\\n");
   if (input.includes("Unprocessable")) process.exit(1);
 }
-console.log("https://github.com/acme/Habitat/pull/9");
+const responses = ${JSON.stringify(responses)};
+const asked = Object.keys(responses).find((key) => args.some((arg) => arg.includes(key)) || args.join(" ").startsWith(key));
+console.log(asked === undefined ? "https://github.com/acme/Habitat/pull/9" : responses[asked]);
 `,
   );
   chmodSync(join(bin, "gh"), 0o755);

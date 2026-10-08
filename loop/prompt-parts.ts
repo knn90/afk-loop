@@ -56,9 +56,4 @@ export function sandboxLimits(project: Project): string {
 - The Host pushes, opens the PR and updates the issue: this Sandbox has no GitHub access.`;
 }
 
-export function revisionSandboxLimits(project: Project): string {
-  return `${sandboxBuilds(project)}
-- The Host pushes, posts your replies on the PR and resolves the \`fixed\` threads once the branch is green: this Sandbox has no GitHub access.`;
-}
-
 export const doneTail = `all committed, and \`git status\` is clean. Then reply with ${completionSignal}.`;
