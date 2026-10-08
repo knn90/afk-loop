@@ -3,6 +3,7 @@ import {
   budgetSpentWhy,
   dirtyFeedback,
   lastAttemptDetails,
+  loopMarker,
   readyForAgent,
   readyForHuman,
   unchangedHeadFeedback,
@@ -40,6 +41,16 @@ export interface PullRequest {
   readonly label: string;
 }
 
+export interface OpenFinding {
+  readonly text: string;
+  readonly at?: { readonly path: string; readonly line: number };
+}
+
+export interface PullRequestReview {
+  readonly body: string;
+  readonly comments: readonly { readonly path: string; readonly line: number; readonly body: string }[];
+}
+
 export interface Relabel {
   readonly remove: string;
   readonly add?: string;
@@ -73,6 +84,7 @@ export interface Tracker {
   resolveThread(thread: string): Promise<void>;
   pushBranch(branch: string): Promise<void>;
   openPullRequest(pullRequest: PullRequest): Promise<string>;
+  postReview(pullRequest: string, review: PullRequestReview): Promise<void>;
   mergePullRequest(pullRequest: string, closes: number): Promise<"merged" | "conflict">;
   comment(issueOrPullRequest: number, body: string): Promise<void>;
   relabel(issueOrPullRequest: number, relabel: Relabel): Promise<void>;
@@ -111,8 +123,7 @@ export interface IssueSession extends Session {
 
 export interface Review {
   readonly log: string;
-  readonly openFindings: boolean;
-  readonly unfixedFindings?: string;
+  readonly openFindings: readonly OpenFinding[];
 }
 
 export interface RevisionRun {
@@ -158,8 +169,7 @@ export interface ReviewedOutcome {
   readonly branch: string;
   readonly reviewLogs: string[];
   readonly platforms: readonly Platform[];
-  readonly openFindings: boolean;
-  readonly unfixedFindings?: string;
+  readonly openFindings: readonly OpenFinding[];
   readonly pullRequestDraft?: string;
 }
 
@@ -198,8 +208,7 @@ const priorities = ["priority:p0", "priority:p1", "priority:p2"];
 const draftRuns = 2;
 const implementedBy = "Implemented by the AFK loop's Implementer in the Sandbox.";
 const reviewedBy = "Reviewed by the AFK loop's Reviewer in the Sandbox; its fixes, if any, are on the branch.";
-const allFixed = "It left no finding unfixed.";
-const leftUnfixed = "It left these findings unfixed:";
+const reviewerSays = `${loopMarker}\n**The AFK loop's Reviewer:**`;
 
 export function issueBranchPrefix(issueNumber: number): string {
   return `issue/${issueNumber}-`;
@@ -266,7 +275,8 @@ async function work(issue: Issue, loop: AfkLoopOptions): Promise<Outcome> {
   if (outcome.kind === "handoff" && outcome.reason === "attempt-budget") return handOff(issue, outcome, loop.tracker);
   if (outcome.kind !== "pull-request") return outcome;
   const pullRequest = await openPullRequest(issue, outcome, loop);
-  const green = outcome.platforms.length > 0 && !outcome.openFindings;
+  await postOpenFindings(pullRequest, outcome.openFindings, loop.tracker);
+  const green = outcome.platforms.length > 0 && outcome.openFindings.length === 0;
   return loop.autoMerge && green ? merge(issue, outcome.branch, pullRequest, loop) : outcome;
 }
 
@@ -303,8 +313,7 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
   let lastGreenHead: string | undefined;
   let failures = 0;
   const reviewLogs: string[] = [];
-  let openFindings = false;
-  let unfixedFindings: string | undefined;
+  let openFindings: readonly OpenFinding[] = [];
   const fail = (nextFeedback: string) => {
     feedback = nextFeedback;
     failures += 1;
@@ -313,7 +322,7 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
     if (lastGreenHead) {
       const review = await session.review(feedback);
       reviewLogs.push(review.log);
-      if (!feedback) ({ openFindings, unfixedFindings } = review);
+      if (!feedback) ({ openFindings } = review);
     } else await session.implement(feedback);
 
     worktree = await session.inspect();
@@ -326,7 +335,7 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
       fail(lostCommitsFeedback(lastGreenHead));
       continue;
     }
-    const reviewed: Outcome = { issue: issue.number, kind: "pull-request", branch, reviewLogs, platforms: worktree.platforms, openFindings, ...(unfixedFindings ? { unfixedFindings } : {}) };
+    const reviewed: Outcome = { issue: issue.number, kind: "pull-request", branch, reviewLogs, platforms: worktree.platforms, openFindings };
     if (worktree.head === lastGreenHead) return reviewed;
     if (worktree.head === lastFailure?.head) {
       fail(`${unchangedHeadFeedback}\n\n${lastFailure.log}`);
@@ -366,7 +375,7 @@ function withoutClosingKeywords(draft: string): string {
   return draft.replace(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(:?\s+(?:[\w.-]+\/[\w.-]+)?#\d+)/gi, "Refs$1");
 }
 
-async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, unfixedFindings, pullRequestDraft }: ReviewedOutcome, loop: AfkLoopOptions): Promise<string> {
+async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, openFindings, pullRequestDraft }: ReviewedOutcome, loop: AfkLoopOptions): Promise<string> {
   await loop.tracker.pushBranch(branch);
   const pullRequest = await loop.tracker.openPullRequest({
     branch,
@@ -375,14 +384,41 @@ async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, un
       `Closes #${issue.number}.`,
       ...(pullRequestDraft ? [withoutClosingKeywords(pullRequestDraft)] : []),
       implementedBy,
-      `${reviewedBy} Its logs on the Host: ${reviewLogs.map((log) => `\`${log}\``).join(", ")}. ${unfixedFindings ? leftUnfixed : allFixed}`,
-      ...(unfixedFindings ? [unfixedFindings] : []),
+      `${reviewedBy} Its logs on the Host: ${reviewLogs.map((log) => `\`${log}\``).join(", ")}. ${openFindingsPosted(openFindings.length)}`,
       verifiedLine(loop.platforms, platforms),
     ].join("\n\n"),
     label: readyForHuman,
   });
   await loop.tracker.relabel(issue.number, { remove: readyForAgent });
   return pullRequest;
+}
+
+function openFindingsPosted(count: number): string {
+  if (count === 0) return "It left no Open finding.";
+  return `It posted ${count} Open ${count === 1 ? "finding" : "findings"} as review comments on this PR.`;
+}
+
+async function postOpenFindings(pullRequest: string, findings: readonly OpenFinding[], tracker: Tracker): Promise<void> {
+  if (findings.length === 0) return;
+  try {
+    await tracker.postReview(pullRequest, reviewOf(findings, "inline"));
+  } catch {
+    await tracker.postReview(pullRequest, reviewOf(findings, "body"));
+  }
+}
+
+function reviewOf(findings: readonly OpenFinding[], placed: "inline" | "body"): PullRequestReview {
+  const inline = placed === "inline" ? findings.filter((finding) => finding.at) : [];
+  const inBody = findings.filter((finding) => !inline.includes(finding));
+  return {
+    body: inBody.length > 0 ? [reviewerSays, inBody.map(bullet).join("\n")].join("\n\n") : "",
+    comments: inline.flatMap(({ at, text }) => (at ? [{ ...at, body: `${reviewerSays}\n\n${text}` }] : [])),
+  };
+}
+
+function bullet({ at, text }: OpenFinding): string {
+  const where = at ? `\`${at.path}:${at.line}\`: ` : "";
+  return `- ${where}${text.replaceAll("\n", "\n  ")}`;
 }
 
 async function handOff(issue: Issue, handoff: HandoffOutcome, tracker: Tracker): Promise<HandoffOutcome> {

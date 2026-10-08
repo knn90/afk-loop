@@ -1,5 +1,5 @@
 import { issueNumberOf, type Issue, type LinkedIssue, type RevisionPullRequest, type Tracker } from "./afk-loop.js";
-import { check, gh, lines, repoUrl, type Host } from "./host.js";
+import { check, gh, ghWithInput, lines, repoUrl, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
 import { readyForAgent } from "./loop-rules.js";
 import { hasWriteAccess, isLoopComment, openReviewComments, revisionNumber, type AuthoredComment } from "./review-comments.js";
@@ -180,6 +180,11 @@ export function githubTracker({ repo, baseBranch }: Loop, host: Host): Tracker {
 
     async openPullRequest({ branch, title, body, label }) {
       return gh("pr", "create", "-R", repo, "--base", baseBranch, "--head", branch, "--title", title, "--body", body, "--label", label).trim();
+    },
+
+    async postReview(pullRequest, { body, comments }) {
+      const review = { event: "COMMENT", body, comments: comments.map(({ path, line, body }) => ({ path, line, side: "RIGHT", body })) };
+      ghWithInput(JSON.stringify(review), "api", "--method", "POST", `repos/${repo}/pulls/${pullRequest.split("/").at(-1)}/reviews`, "--input", "-");
     },
 
     async mergePullRequest(pullRequest, closes) {

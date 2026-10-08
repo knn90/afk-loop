@@ -34,7 +34,7 @@ The Sandbox agent that reviews the Implementer's branch against the issue and co
 The Sandbox agent that drafts the PR body for a branch the Reviewer left green. It changes no file.
 
 **Open finding**:
-A finding the Reviewer left unfixed that the maintainer must decide. An unfixed finding the issue itself settles, or that belongs to a later issue, is not open.
+A finding the Reviewer left unfixed: the maintainer must decide it. It is posted as a PR review comment. A real problem outside the issue's work is one; a point the issue itself settles is not a finding.
 _Avoid_: declined finding
 
 **Platform**:

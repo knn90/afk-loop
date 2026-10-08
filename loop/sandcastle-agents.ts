@@ -8,7 +8,7 @@ import { implementerPrompt } from "./implementer-prompt.js";
 import { platformsChanged, type Platform } from "./platforms.js";
 import { completionSignal } from "./prompt-parts.js";
 import { drafterPrompt, pullRequestDraft } from "./drafter-prompt.js";
-import { hasOpenFindings, reviewerPrompt, unfixedFindings } from "./reviewer-prompt.js";
+import { openFindings, reviewerPrompt } from "./reviewer-prompt.js";
 import { revisionPrompt } from "./revision-prompt.js";
 import { copyFileOut, guestExec, guestRepo, quote, repoExec, tartSandbox } from "./tart.js";
 
@@ -205,7 +205,7 @@ export function sandcastleAgents(loop: Loop, host: Host): Agents {
           const changed = await platformsChangedBetween(host, loop.platforms, base, `refs/heads/${branch}`);
           const standards = changed.map((platform) => host.git("show", `${base}:${platform.standards}`).trim());
           const run = await runAgent("Reviewer", reviewerPrompt({ project: loop, issue, branch, base, standards, feedback }));
-          return { log: run.log, openFindings: hasOpenFindings(run.output), unfixedFindings: unfixedFindings(run.output) };
+          return { log: run.log, openFindings: openFindings(run.output) };
         },
         async draft(testRun) {
           const run = await sandbox.runAgentKeepingHead("Drafter", logName("Drafter"), drafterPrompt({ repo: loop.repo, issue, branch, base, testRun }));
