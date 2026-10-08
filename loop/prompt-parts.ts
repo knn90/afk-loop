@@ -7,9 +7,16 @@ export const completionSignal = "<promise>COMPLETE</promise>";
 
 export const glossaryRule = "Read GLOSSARY.md and use its vocabulary; if GLOSSARY-MAP.md exists, follow it to the context you change.";
 
+function blocks(reply: string, tag: string): RegExpExecArray[] {
+  return [...reply.matchAll(new RegExp(`<${tag}>((?:(?!<${tag}>)[\\s\\S])*?)</${tag}>`, "g"))];
+}
+
 export function lastBlock(reply: string, tag: string): string | undefined {
-  const blocks = [...reply.matchAll(new RegExp(`<${tag}>((?:(?!<${tag}>)[\\s\\S])*?)</${tag}>`, "g"))];
-  return blocks.at(-1)?.[1]?.trim() || undefined;
+  return blocks(reply, tag).at(-1)?.[1]?.trim() || undefined;
+}
+
+export function hasBlock(reply: string, tag: string): boolean {
+  return blocks(reply, tag).length > 0;
 }
 
 export function issueBlock(issue: Issue): string {

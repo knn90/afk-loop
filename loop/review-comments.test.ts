@@ -13,20 +13,14 @@ describe("hasWriteAccess", () => {
 });
 
 describe("isLoopComment", () => {
-  test("a write-access comment starting with the loop marker is the loop's", () => {
-    const comment = { authorAssociation: "OWNER", body: "<!-- afk-loop -->\nHanded off to a human." };
+  test("a comment starting with the loop marker is the loop's", () => {
+    const comment = { body: "<!-- afk-loop -->\nHanded off to a human." };
 
     assert.equal(isLoopComment(comment), true);
   });
 
   test("a maintainer's own comment isn't the loop's, even when it quotes the marker", () => {
-    const comment = { authorAssociation: "OWNER", body: "The loop wrote `<!-- afk-loop -->` above." };
-
-    assert.equal(isLoopComment(comment), false);
-  });
-
-  test("a stranger's comment carrying the loop marker isn't the loop's", () => {
-    const comment = { authorAssociation: "NONE", body: "<!-- afk-loop -->\nHanded off to a human." };
+    const comment = { body: "The loop wrote `<!-- afk-loop -->` above." };
 
     assert.equal(isLoopComment(comment), false);
   });

@@ -1,16 +1,11 @@
 import { loopMarker } from "./loop-rules.js";
 
-interface Signed {
-  readonly authorAssociation: string;
-  readonly body: string;
-}
-
 const writeAccess = ["OWNER", "COLLABORATOR"];
 
-export function hasWriteAccess(comment: Pick<Signed, "authorAssociation">): boolean {
+export function hasWriteAccess(comment: { readonly authorAssociation: string }): boolean {
   return writeAccess.includes(comment.authorAssociation);
 }
 
-export function isLoopComment(comment: Signed): boolean {
-  return hasWriteAccess(comment) && comment.body.startsWith(loopMarker);
+export function isLoopComment(comment: { readonly body: string }): boolean {
+  return comment.body.startsWith(loopMarker);
 }

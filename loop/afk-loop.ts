@@ -38,12 +38,11 @@ export interface PullRequest {
   readonly branch: string;
   readonly title: string;
   readonly body: string;
-  readonly label: string;
 }
 
 export interface OpenFinding {
   readonly text: string;
-  readonly at?: { readonly path: string; readonly line: number };
+  readonly at?: { readonly path: string; readonly line?: number };
 }
 
 export interface PullRequestReview {
@@ -62,8 +61,8 @@ export interface Tracker {
   pushBranch(branch: string): Promise<void>;
   openPullRequest(pullRequest: PullRequest): Promise<string>;
   postReview(pullRequest: string, review: PullRequestReview): Promise<void>;
-  comment(issueOrPullRequest: number, body: string): Promise<void>;
-  relabel(issueOrPullRequest: number, relabel: Relabel): Promise<void>;
+  comment(issueNumber: number, body: string): Promise<void>;
+  relabel(issueNumber: number, relabel: Relabel): Promise<void>;
 }
 
 export interface LocalBranch {
@@ -94,7 +93,7 @@ export interface Session {
 export interface IssueSession extends Session {
   implement(feedback?: string, fixableFindings?: string): Promise<ImplementerRun>;
   review(): Promise<FirstReview>;
-  wrapUp(fixRound: FixRound): Promise<Review>;
+  wrapUp(fixRound: FixRound): Promise<WrapUp>;
   putBack(head: string): Promise<void>;
 }
 
@@ -112,6 +111,12 @@ export interface Review {
 
 export interface FirstReview extends Review {
   readonly fixableFindings?: string;
+}
+
+export interface WrapUp {
+  readonly log: string;
+  readonly openFindings?: readonly OpenFinding[];
+  readonly pullRequestDraft?: string;
 }
 
 export interface FixRound {
@@ -171,7 +176,8 @@ export const defaultCap = 5;
 const priorities = ["priority:p0", "priority:p1", "priority:p2"];
 const implementedBy = "Implemented by the AFK loop's Implementer in the Sandbox.";
 const reviewedBy = "Reviewed by the AFK loop's Reviewer in the Sandbox.";
-const fixRoundFailed = "The Fix round failed its Test run, so its fixes are not included: the Reviewer's Fixable findings are among the Open findings.";
+const fixesNotIncluded = "The Fix round failed its Test run, so its fixes are not included: the Reviewer's Fixable findings are among the Open findings.";
+const noneFixed = "The Fix round failed, so none of these Fixable findings is fixed:";
 const reviewerSays = `${loopMarker}\n**The AFK loop's Reviewer:**`;
 
 export function issueBranchPrefix(issueNumber: number): string {
@@ -243,21 +249,20 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
   let feedback: string | undefined;
   let worktree: WorktreeState | undefined;
   let fixRound: FixRound | undefined;
-  let reviewed: WorktreeState | undefined;
-  let findingsLeft: string | undefined;
+  let reviewedPlatforms: readonly Platform[] = [];
   let failures = 0;
   const reviewLogs: string[] = [];
   const fail = (nextFeedback: string) => {
     feedback = nextFeedback;
     failures += 1;
   };
-  const reviewerRun = async <R extends Review>(run: Promise<R>, head: string): Promise<R> => {
+  const reviewerRun = async <R extends { readonly log: string }>(run: Promise<R>, head: string): Promise<R> => {
     const review = await run;
     await session.putBack(head);
     reviewLogs.push(review.log);
     return review;
   };
-  const pullRequest = ({ openFindings, pullRequestDraft }: Review, platforms: readonly Platform[], failed?: true): Outcome => ({
+  const pullRequest = ({ openFindings, pullRequestDraft }: Review, platforms: readonly Platform[], fixRoundFailed?: true): Outcome => ({
     issue: issue.number,
     kind: "pull-request",
     branch,
@@ -265,11 +270,11 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
     platforms,
     openFindings,
     ...(pullRequestDraft ? { pullRequestDraft } : {}),
-    ...(failed ? { fixRoundFailed: failed } : {}),
+    ...(fixRoundFailed ? { fixRoundFailed } : {}),
   });
-  const wrapUp = async (fixRound: FixRound, { head, platforms }: WorktreeState, failed?: true): Promise<Outcome> => {
-    const review = await reviewerRun(session.wrapUp({ ...fixRound, ...(findingsLeft ? { findingsLeft } : {}), ...(failed ? { failed } : {}) }), head);
-    return pullRequest(review, platforms, failed);
+  const wrapUp = async (round: FixRound, head: string, platforms: readonly Platform[]): Promise<Outcome> => {
+    const review = await reviewerRun(session.wrapUp(round), head);
+    return pullRequest({ ...review, openFindings: finalOpenFindings(round, review.openFindings) }, platforms, round.failed);
   };
   while (failures < attemptBudget) {
     const run = await session.implement(feedback, fixRound?.fixableFindings);
@@ -277,7 +282,7 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
     if (!fixRound && !worktree.dirty && worktree.commitsAhead === 0) {
       return { issue: issue.number, kind: "handoff", branch, reason: "no-commits", lastReply: run.reply, implementerLog: run.log };
     }
-    findingsLeft = run.findingsLeft;
+    if (fixRound && run.findingsLeft) fixRound = { ...fixRound, findingsLeft: run.findingsLeft };
     if (worktree.dirty) {
       fail(dirtyFeedback);
       continue;
@@ -295,17 +300,17 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
       }
     }
 
-    if (fixRound) return wrapUp(fixRound, worktree);
+    if (fixRound) return wrapUp(fixRound, worktree.head, worktree.platforms);
     const review = await reviewerRun(session.review(), worktree.head);
     if (!review.fixableFindings) return pullRequest(review, worktree.platforms);
     fixRound = { fixableFindings: review.fixableFindings, openFindings: review.openFindings, reviewedHead: worktree.head };
-    reviewed = worktree;
+    reviewedPlatforms = worktree.platforms;
     lastFailure = undefined;
     feedback = undefined;
   }
-  if (fixRound && reviewed) {
-    await session.putBack(reviewed.head);
-    return wrapUp(fixRound, reviewed, true);
+  if (fixRound) {
+    await session.putBack(fixRound.reviewedHead);
+    return wrapUp({ ...fixRound, failed: true }, fixRound.reviewedHead, reviewedPlatforms);
   }
   const log = worktree?.dirty && lastFailure ? `${dirtyFeedback}\n\nThe Test run before it reported:\n\n${lastFailure.log}` : (feedback ?? "");
   return {
@@ -318,11 +323,17 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
   };
 }
 
+function finalOpenFindings({ fixableFindings, openFindings, failed }: FixRound, wrapUp?: readonly OpenFinding[]): readonly OpenFinding[] {
+  const findings = wrapUp ?? openFindings;
+  const fixableLost = failed && (!wrapUp || wrapUp.length === 0);
+  return fixableLost ? [...findings, { text: `${noneFixed}\n\n${fixableFindings}` }] : findings;
+}
+
 function withoutClosingKeywords(draft: string): string {
   return draft.replace(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(:?\s+(?:[\w.-]+\/[\w.-]+)?#\d+)/gi, "Refs$1");
 }
 
-async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, openFindings, pullRequestDraft, fixRoundFailed: failed }: ReviewedOutcome, loop: AfkLoopOptions): Promise<string> {
+async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, openFindings, pullRequestDraft, fixRoundFailed }: ReviewedOutcome, loop: AfkLoopOptions): Promise<string> {
   await loop.tracker.pushBranch(branch);
   const pullRequest = await loop.tracker.openPullRequest({
     branch,
@@ -332,10 +343,9 @@ async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, op
       ...(pullRequestDraft ? [withoutClosingKeywords(pullRequestDraft)] : []),
       implementedBy,
       `${reviewedBy} Its logs on the Host: ${reviewLogs.map((log) => `\`${log}\``).join(", ")}. ${openFindingsPosted(openFindings.length)}`,
-      ...(failed ? [fixRoundFailed] : []),
+      ...(fixRoundFailed ? [fixesNotIncluded] : []),
       verifiedLine(loop.platforms, platforms),
     ].join("\n\n"),
-    label: readyForHuman,
   });
   await loop.tracker.relabel(issue.number, { remove: readyForAgent });
   return pullRequest;
@@ -356,16 +366,13 @@ async function postOpenFindings(pullRequest: string, findings: readonly OpenFind
 }
 
 function reviewOf(findings: readonly OpenFinding[], placed: "inline" | "body"): PullRequestReview {
-  const inline = placed === "inline" ? findings.filter((finding) => finding.at) : [];
-  const inBody = findings.filter((finding) => !inline.includes(finding));
-  return {
-    body: inBody.length > 0 ? [reviewerSays, inBody.map(bullet).join("\n")].join("\n\n") : "",
-    comments: inline.flatMap(({ at, text }) => (at ? [{ ...at, body: `${reviewerSays}\n\n${text}` }] : [])),
-  };
+  const comments = findings.flatMap(({ at, text }) => (placed === "inline" && at?.line ? [{ path: at.path, line: at.line, body: `${reviewerSays}\n\n${text}` }] : []));
+  const inBody = placed === "inline" ? findings.filter(({ at }) => !at?.line) : findings;
+  return { body: inBody.length > 0 ? [reviewerSays, inBody.map(bullet).join("\n")].join("\n\n") : "", comments };
 }
 
 function bullet({ at, text }: OpenFinding): string {
-  const where = at ? `\`${at.path}:${at.line}\`: ` : "";
+  const where = at ? `\`${at.line ? `${at.path}:${at.line}` : at.path}\`: ` : "";
   return `- ${where}${text.replaceAll("\n", "\n  ")}`;
 }
 
@@ -378,8 +385,8 @@ async function handOff(issue: Issue, handoff: HandoffOutcome, tracker: Tracker):
     [
       `Handed off to a human: ${why}.`,
       details,
-      `The branch \`${branch}\` and its worktree stay on the Host; nothing is pushed.`,
-      `To requeue for the loop: remove the local \`${branch}\` branch and its worktree, relabel the issue \`${readyForAgent}\`.`,
+      `Nothing is pushed. What the session left, if anything, is on the Host: on the local branch \`${branch}\`, or uncommitted in its worktree.`,
+      `To requeue for the loop: remove the local \`${branch}\` branch and its worktree, if they are still there, then relabel the issue \`${readyForAgent}\`.`,
     ].join("\n\n"),
   );
   return handoff;

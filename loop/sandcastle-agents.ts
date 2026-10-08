@@ -7,7 +7,7 @@ import type { Loop } from "./loop-config.js";
 import { findingsLeft, implementerPrompt } from "./implementer-prompt.js";
 import { platformsChanged, type Platform } from "./platforms.js";
 import { completionSignal } from "./prompt-parts.js";
-import { fixableFindings, openFindings, pullRequestDraft, reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
+import { fixableFindings, openFindings, pullRequestDraft, reviewerPrompt, wrapUpOpenFindings, wrapUpPrompt } from "./reviewer-prompt.js";
 import { copyFileOut, guestExec, guestRepo, quote, repoExec, tartSandbox } from "./tart.js";
 
 const sandcastleSyncBase = "refs/sandcastle/sync-base";
@@ -96,6 +96,14 @@ export async function openSandbox(loop: Loop, host: Host, vm: string, branch: st
     host.git("-c", "fetch.fsckObjects=true", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", hostBundle, "HEAD");
     rmSync(hostBundle);
   };
+  const quitRebaseApply = () => {
+    if (existsSync(worktree("rev-parse", "--path-format=absolute", "--git-path", "rebase-apply"))) worktree("am", "--quit");
+  };
+  const cleanWorktreeAt = (head: string) => {
+    worktree("reset", "--hard", "--quiet", head);
+    worktree("clean", "-ffdxq");
+  };
+  const markSynced = () => guestGit(`update-ref ${sandcastleSyncBase} HEAD`);
   const close = async () => {
     await sandbox.close();
     clearRunMarker(host, branch);
@@ -123,23 +131,19 @@ export async function openSandbox(loop: Loop, host: Host, vm: string, branch: st
       const head = await guestGit("rev-parse HEAD");
       const dirty = (await guestGit("status --porcelain --untracked-files=all")) !== "";
       await fetchFromSandbox(head);
-      if (existsSync(worktree("rev-parse", "--path-format=absolute", "--git-path", "rebase-apply"))) worktree("am", "--quit");
+      quitRebaseApply();
       if (dirty) worktree("reset", "--quiet", head);
-      else {
-        worktree("reset", "--hard", "--quiet", head);
-        worktree("clean", "-ffdxq");
-      }
-      await guestGit(`update-ref ${sandcastleSyncBase} HEAD`);
+      else cleanWorktreeAt(head);
+      await markSynced();
       const commitsAhead = Number(host.git("rev-list", "--count", `${base}..${head}`).trim());
       return { dirty, head, commitsAhead, platforms: await platformsChangedBetween(host, loop.platforms, base, head) };
     },
     async putBack(head) {
       await guestGit(`reset --hard --quiet ${head}`);
       await guestGit("clean -ffdq");
-      await guestGit(`update-ref ${sandcastleSyncBase} HEAD`);
-      if (existsSync(worktree("rev-parse", "--path-format=absolute", "--git-path", "rebase-apply"))) worktree("am", "--quit");
-      worktree("reset", "--hard", "--quiet", head);
-      worktree("clean", "-ffdxq");
+      await markSynced();
+      quitRebaseApply();
+      cleanWorktreeAt(head);
     },
     close,
     async remove() {
@@ -192,7 +196,7 @@ export function sandcastleAgents(loop: Loop, host: Host): Agents {
         },
         async wrapUp(fixRound) {
           const run = await runAgent("Reviewer", wrapUpPrompt({ project: loop, issue, branch, base, standards: await standards(), fixRound }));
-          return { log: run.log, openFindings: openFindings(run.output), pullRequestDraft: pullRequestDraft(run.output) };
+          return { log: run.log, openFindings: wrapUpOpenFindings(run.output), pullRequestDraft: pullRequestDraft(run.output) };
         },
         putBack: sandbox.putBack,
         inspect: () => sandbox.inspect(base),

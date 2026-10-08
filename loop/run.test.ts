@@ -7,7 +7,7 @@ describe("runOptions", () => {
     assert.deepEqual(runOptions(["--cap", "2"]), { cap: 2 });
   });
 
-  test("--auto-merge is refused as an unknown option", () => {
+  test("an unknown option is refused", () => {
     assert.throws(() => runOptions(["--auto-merge"]), { code: "ERR_PARSE_ARGS_UNKNOWN_OPTION", message: /Unknown option '--auto-merge'/ });
   });
 });

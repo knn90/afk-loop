@@ -1,7 +1,7 @@
 import type { Issue, LinkedIssue, Tracker } from "./afk-loop.js";
 import { gh, ghWithInput, lines, repoUrl, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
-import { readyForAgent } from "./loop-rules.js";
+import { readyForAgent, readyForHuman } from "./loop-rules.js";
 import { hasWriteAccess, isLoopComment } from "./review-comments.js";
 
 interface RestIssue {
@@ -14,7 +14,7 @@ interface RestIssue {
   issue_dependencies_summary?: { blocked_by: number };
 }
 
-function openIssues(repo: string, filter = ""): Issue[] {
+function openIssues(repo: string, filter: string): Issue[] {
   const pages: RestIssue[][] = JSON.parse(gh("api", "--paginate", "--slurp", `repos/${repo}/issues?state=open${filter}&per_page=100`));
   return pages
     .flat()
@@ -77,8 +77,8 @@ export function githubTracker({ repo, baseBranch }: Loop, host: Host): Tracker {
       host.gitWithGitHub("push", repoUrl(repo), `refs/heads/${branch}:refs/heads/${branch}`);
     },
 
-    async openPullRequest({ branch, title, body, label }) {
-      return gh("pr", "create", "-R", repo, "--base", baseBranch, "--head", branch, "--title", title, "--body", body, "--label", label).trim();
+    async openPullRequest({ branch, title, body }) {
+      return gh("pr", "create", "-R", repo, "--base", baseBranch, "--head", branch, "--title", title, "--body", body, "--label", readyForHuman).trim();
     },
 
     async postReview(pullRequest, { body, comments }) {
@@ -86,12 +86,12 @@ export function githubTracker({ repo, baseBranch }: Loop, host: Host): Tracker {
       ghWithInput(JSON.stringify(review), "api", "--method", "POST", `repos/${repo}/pulls/${pullRequest.split("/").at(-1)}/reviews`, "--input", "-");
     },
 
-    async comment(issueOrPullRequest, body) {
-      gh("issue", "comment", String(issueOrPullRequest), "-R", repo, "--body", body);
+    async comment(issueNumber, body) {
+      gh("issue", "comment", String(issueNumber), "-R", repo, "--body", body);
     },
 
-    async relabel(issueOrPullRequest, { remove, add }) {
-      gh("issue", "edit", String(issueOrPullRequest), "-R", repo, "--remove-label", remove, ...(add ? ["--add-label", add] : []));
+    async relabel(issueNumber, { remove, add }) {
+      gh("issue", "edit", String(issueNumber), "-R", repo, "--remove-label", remove, ...(add ? ["--add-label", add] : []));
     },
   };
 }
