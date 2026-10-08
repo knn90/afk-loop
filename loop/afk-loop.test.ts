@@ -812,70 +812,42 @@ describe("runAfkLoop, Revision", () => {
 });
 
 describe("runAfkLoop, PR body", () => {
-  test("the Drafter's draft sits between the Closes line and the Host's own lines", async () => {
-    const { sut, tracker } = makeSUT({ issues: [issue(1)], drafts: { 1: ["## Summary\n\nShows the Streak badge."] } });
+  test("the Reviewer's draft sits between the Closes line and the Host's own lines", async () => {
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { pullRequestDraft: "## Summary\n\nShows the Streak badge." }] } });
 
     await sut.run();
 
     assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #1\.\n\n## Summary\n\nShows the Streak badge\.\n\nImplemented by the AFK loop's Implementer/);
   });
 
-  test("the draft is written once, after the last Test run, from what it verified", async () => {
-    const { sut, agents } = makeSUT({
+  test("the draft is the one of the Reviewer's last run", async () => {
+    const { sut, tracker } = makeSUT({
       issues: [issue(1)],
-      runs: { 1: [{}, {}, {}] },
+      runs: { 1: [{}, { pullRequestDraft: "## Summary\n\nFirst." }, { pullRequestDraft: "## Summary\n\nLast." }] },
       testRunResults: [green, "error: boom", green],
-      drafts: { 1: ["## Summary"] },
     });
 
     await sut.run();
 
-    assert.deepEqual(agents.testRunsBeforeDraft, [3]);
-    assert.match(agents.draftTestRuns[0] ?? "", /^Verified: the Test run passed on the reviewed commit/);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #1\.\n\n## Summary\n\nLast\.\n\nImplemented by/);
   });
 
   test("a draft closes no issue of its own", async () => {
-    const { sut, tracker } = makeSUT({ issues: [issue(1)], drafts: { 1: ["Fixes #9 and closes: acme/Habitat#10. The dialog closes on Save."] } });
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { pullRequestDraft: "Fixes #9 and closes: acme/Habitat#10. The dialog closes on Save." }] } });
 
     await sut.run();
 
     assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #1\.\n\nRefs #9 and Refs: acme\/Habitat#10\. The dialog closes on Save\.\n\n/);
   });
 
-  test("a missing draft is asked for once more", async () => {
-    const { sut, tracker, agents } = makeSUT({ issues: [issue(1)], drafts: { 1: [undefined, "## Summary"] } });
-
-    await sut.run();
-
-    assert.equal(agents.draftTestRuns.length, 2);
-    assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #1\.\n\n## Summary\n\n/);
-  });
-
-  test("a Drafter run that fails counts as a missing draft", async () => {
-    const { sut, tracker } = makeSUT({ issues: [issue(1)], drafts: { 1: [new Error("agent crashed"), "## Summary"] } });
+  test("with no draft the PR still opens, the Host's own lines following the Closes line", async () => {
+    const { sut, tracker, calls } = makeSUT({ issues: [issue(1)] });
 
     const outcomes = await sut.run();
 
     assert.equal(outcomes[0]?.kind, "pull-request");
-    assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #1\.\n\n## Summary\n\n/);
-  });
-
-  test("with no draft after two runs the Host's own lines follow the Closes line", async () => {
-    const { sut, tracker, agents } = makeSUT({ issues: [issue(1)] });
-
-    await sut.run();
-
-    assert.equal(agents.draftTestRuns.length, 2);
     assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #1\.\n\nImplemented by the AFK loop's Implementer/);
-  });
-
-  test("a Handoff drafts nothing", async () => {
-    const { sut, agents } = makeSUT({ issues: [issue(1)], testRunResults: ["error: boom", "error: boom", "error: boom"] });
-
-    const outcomes = await sut.run();
-
-    assert.equal(outcomes[0]?.kind, "handoff");
-    assert.equal(agents.draftTestRuns.length, 0);
+    assert.deepEqual(calls.filter((call) => call === "implement" || call === "review"), ["implement", "review"]);
   });
 });
 
@@ -1083,7 +1055,6 @@ interface Fixture {
   pushedBranches?: string[];
   localBranches?: Record<number, LocalBranch[]>;
   runs?: Record<number, Run[]>;
-  drafts?: Record<number, (string | Error | undefined)[]>;
   testRunResults?: (string | null)[];
   pushFails?: boolean;
   pullRequestFails?: boolean;
@@ -1107,6 +1078,7 @@ interface Run {
   platforms?: Platform[];
   openFindings?: boolean;
   unfixedFindings?: string;
+  pullRequestDraft?: string;
 }
 
 function makeSUT(fixture: Fixture) {
@@ -1243,8 +1215,6 @@ class SpyAgents implements Agents {
   reviewFeedback: (string | undefined)[] = [];
   revisionFeedback: (string | undefined)[] = [];
   revisionComments: NumberedComment[][] = [];
-  draftTestRuns: string[] = [];
-  testRunsBeforeDraft: number[] = [];
   sandboxes: SandboxExec[] = [];
 
   constructor(
@@ -1308,7 +1278,6 @@ class SpyAgents implements Agents {
     this.startedIssues.push(issue.number);
     this.started.push(issue);
     const runs = this.fixture.runs?.[issue.number] ?? [];
-    const drafts = [...(this.fixture.drafts?.[issue.number] ?? [])];
     let runIndex = -1;
     let commitsAhead = 0;
     let headVersion = 0;
@@ -1330,15 +1299,8 @@ class SpyAgents implements Agents {
         this.calls.push("review");
         this.reviewFeedback.push(feedback);
         agentRun();
-        const { openFindings = false, unfixedFindings } = run();
-        return { log: `logs/review-${this.reviewFeedback.length}`, openFindings, unfixedFindings };
-      },
-      draft: async (testRun) => {
-        this.draftTestRuns.push(testRun);
-        this.testRunsBeforeDraft.push(testRuns(this.calls));
-        const draft = drafts.shift();
-        if (draft instanceof Error) throw draft;
-        return draft;
+        const { openFindings = false, unfixedFindings, pullRequestDraft } = run();
+        return { log: `logs/review-${this.reviewFeedback.length}`, openFindings, unfixedFindings, pullRequestDraft };
       },
       inspect: async () => {
         this.calls.push("inspect");

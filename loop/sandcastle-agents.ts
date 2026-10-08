@@ -7,8 +7,7 @@ import type { Loop } from "./loop-config.js";
 import { implementerPrompt } from "./implementer-prompt.js";
 import { platformsChanged, type Platform } from "./platforms.js";
 import { completionSignal } from "./prompt-parts.js";
-import { drafterPrompt, pullRequestDraft } from "./drafter-prompt.js";
-import { hasOpenFindings, reviewerPrompt, unfixedFindings } from "./reviewer-prompt.js";
+import { hasOpenFindings, pullRequestDraft, reviewerPrompt, unfixedFindings } from "./reviewer-prompt.js";
 import { revisionPrompt } from "./revision-prompt.js";
 import { copyFileOut, guestExec, guestRepo, quote, repoExec, tartSandbox } from "./tart.js";
 
@@ -73,7 +72,6 @@ function mergeBaseBranch(host: Host, issueNumber: number, branch: string, baseBr
 
 interface AgentSandbox extends Omit<Session, "inspect"> {
   runAgent(name: string, logName: string, prompt: string): Promise<{ output: string; log: string }>;
-  runAgentKeepingHead(name: string, logName: string, prompt: string): Promise<{ output: string; log: string }>;
   inspect(base: string, pushed?: string): Promise<WorktreeState>;
   remove(): Promise<void>;
 }
@@ -137,16 +135,6 @@ export async function openSandbox(loop: Loop, host: Host, vm: string, branch: st
   return {
     exec: repoExec(vm),
     runAgent,
-    async runAgentKeepingHead(name, logName, prompt) {
-      const kept = worktree("rev-parse", "HEAD");
-      try {
-        return await runAgent(name, logName, prompt);
-      } finally {
-        if (existsSync(worktree("rev-parse", "--path-format=absolute", "--git-path", "rebase-apply"))) worktree("am", "--quit");
-        worktree("reset", "--hard", "--quiet", kept);
-        worktree("clean", "-ffdxq");
-      }
-    },
     async inspect(base, pushed = base) {
       const head = await guestGit("rev-parse HEAD");
       const dirty = (await guestGit("status --porcelain --untracked-files=all")) !== "";
@@ -189,7 +177,7 @@ export function sandcastleAgents(loop: Loop, host: Host): Agents {
       host.fetchFromGitHub(loop.repo, loop.baseBranch);
       const base = commitAt(host, remoteBase(loop));
       const sandbox = await openSandbox(loop, host, loop.vms.issue(issue.number), branch, `#${issue.number}`);
-      const agentRuns = { Implementer: 0, Reviewer: 0, Drafter: 0 };
+      const agentRuns = { Implementer: 0, Reviewer: 0 };
       const logName = (role: keyof typeof agentRuns) => {
         agentRuns[role] += 1;
         return `issue-${issue.number}-${role.toLowerCase()}-${agentRuns[role]}`;
@@ -205,11 +193,7 @@ export function sandcastleAgents(loop: Loop, host: Host): Agents {
           const changed = await platformsChangedBetween(host, loop.platforms, base, `refs/heads/${branch}`);
           const standards = changed.map((platform) => host.git("show", `${base}:${platform.standards}`).trim());
           const run = await runAgent("Reviewer", reviewerPrompt({ project: loop, issue, branch, base, standards, feedback }));
-          return { log: run.log, openFindings: hasOpenFindings(run.output), unfixedFindings: unfixedFindings(run.output) };
-        },
-        async draft(testRun) {
-          const run = await sandbox.runAgentKeepingHead("Drafter", logName("Drafter"), drafterPrompt({ repo: loop.repo, issue, branch, base, testRun }));
-          return pullRequestDraft(run.output);
+          return { log: run.log, openFindings: hasOpenFindings(run.output), unfixedFindings: unfixedFindings(run.output), pullRequestDraft: pullRequestDraft(run.output) };
         },
         inspect: () => sandbox.inspect(base),
         async close() {
