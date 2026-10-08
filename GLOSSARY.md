@@ -1,6 +1,6 @@
 # AFK Loop
 
-The Sandcastle loop that takes `ready-for-agent` issues, has agents implement, review and test them in a Sandbox, and hands back a PR, or merges it under Auto-merge; then takes a handed-back PR's review comments and revises it.
+The Sandcastle loop that takes `ready-for-agent` issues, has agents implement, review and test them in a Sandbox, and hands back a PR, never merging it; then takes a handed-back PR's review comments and revises it.
 
 ## Language
 
@@ -42,10 +42,6 @@ _Avoid_: target, stack
 The checks the loop executes in the issue's Sandbox, judged by exit code: the steps of each present Platform whose folder the branch changes against the base branch. A branch changing no Platform's folder has no Test run.
 _Avoid_: Host test run, CI, build
 
-**Auto-merge**:
-The Host merging a green PR in a run started with `--auto-merge`, then picking the next Eligible issue. Green: no open finding, a passed Test run on the reviewed commit, and a clean merge into `main`.
-_Avoid_: auto-approve, squash
-
 **Preflight**:
 The check at the start of `run` and `smoke`, beside the env and Tart checks, of what the loop requires of the repo: files on `origin/<baseBranch>` and labels on GitHub. It stops with one list of everything missing, before any Sandbox opens or Attempt is spent.
 
@@ -57,7 +53,7 @@ The 3 failed Attempts an issue may spend, shared by Implementer and Reviewer. Ea
 _Avoid_: retries, max tries
 
 **Handoff**:
-Returning an issue, or a Revision PR, to the maintainer as `ready-for-human` when the Attempt budget runs out; for a Revision PR, and for a green PR under Auto-merge, also when `main` no longer merges cleanly. Under Auto-merge a Handoff ends the run.
+Returning an issue, or a Revision PR, to the maintainer as `ready-for-human` when the Attempt budget runs out; for a Revision PR, also when `main` no longer merges cleanly. A Handoff does not end the run.
 _Avoid_: failure, abort
 
 **Leftover**:
