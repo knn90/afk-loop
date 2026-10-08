@@ -70,7 +70,7 @@ Passes when the Host reads an issue with `GH_TOKEN`, the Sandbox has no GitHub t
 npx --prefix .sandcastle afk-loop run [--cap 5]
 ```
 
-Works Eligible issues, one at a time, up to the cap. It never merges a PR: merging is the maintainer's, so an issue with an open blocker is worked in a later run, once the blocker's PR is merged. A run stops early only on an error. An Eligible issue: a fresh Sandbox (a Tart VM cloned from `<name>-base`, holding a copy of the repo), an Opus Implementer in it on `issue/<n>-<slug>`, then a Test run the loop executes in the same Sandbox. Failures go back to the Implementer. Once green, an Opus Reviewer in the same Sandbox runs the code-review skill against the issue and the coding standards (as on the base branch), then reviews its design with the codebase-design skill, commits its fixes, and the loop re-tests; failures go back to the Reviewer, which then fixes only those. Both agents share the Attempt budget. The reviewed, green branch is pushed as a `ready-for-human` PR, and the findings the Reviewer left unfixed, its Open findings, are posted on it as one PR review.
+Works Eligible issues, one at a time, up to the cap. It never merges a PR: merging is the maintainer's, so an issue with an open blocker is worked in a later run, once the blocker's PR is merged. A run stops early only on an error. An Eligible issue: a fresh Sandbox (a Tart VM cloned from `<name>-base`, holding a copy of the repo), an Opus Implementer in it on `issue/<n>-<slug>`, then a Test run the loop executes in the same Sandbox. Failures go back to the Implementer. Once green, an Opus Reviewer in the same Sandbox runs the code-review skill against the issue and the coding standards (as on the base branch), then reviews its design with the codebase-design skill. It changes no file: it sorts each finding into Fixable or Open. The Implementer fixes the Fixable findings in one Fix round, the Test run decides again, and a second Reviewer run wraps up. A branch with no Fixable finding takes one Reviewer run. The reviewed, green branch is pushed as a `ready-for-human` PR, and the Open findings are posted on it as one PR review.
 
 The Sandbox has no GitHub access, so the Host pastes into each agent's prompt every issue the issue body names (title, body, the maintainer's comments), except those under its Parent and Blocked by headings; the limits are in `loop/linked-issues.ts`.
 
@@ -78,7 +78,21 @@ The Test run and the Reviewer's standards follow what the branch changes against
 
 The Implementer has no diff to route on yet, so its prompt names every platform's standards file, to follow by folder.
 
-- A Reviewer with no new commits skips the re-test: that commit is already green.
+- The Reviewer is read-only. After each Reviewer run the Host puts the branch, on the Host and in the Sandbox, back at the commit the Test run passed, whatever the run left behind. No Test run follows a Reviewer run, and the pushed commit is always a tested one.
+- Sorting a finding. It is Open when any of these holds, and Fixable otherwise:
+  - fixing it changes behaviour the issue asked for, or the issue does not say which way to go;
+  - there is more than one reasonable fix, with different results for the user or for the design;
+  - the fix reaches outside this diff: another module, or a later issue's work;
+  - the Reviewer is not sure the finding is valid.
+- The Reviewer's first run returns the Fixable findings as text for the Implementer, in the last `<fixable-findings>` block of its reply, the Open findings, and, with no Fixable finding, the PR body.
+- The Fix round: one per issue, only when the first run returned a Fixable finding.
+  - The Implementer runs with only the Fixable findings as its feedback.
+  - New commits get a Test run. A failure goes back to the Implementer and spends the Attempt budget, shared with the first round. Uncommitted changes are a failed Attempt.
+  - No new commits: no Test run.
+- The wrap-up: the second Reviewer run, only after a Fix round. It gets the first run's Fixable and Open findings, and reviews nothing again.
+  - It returns the final Open findings: the first run's, restated against the final diff, and each Fixable finding that was not fixed.
+  - It drafts the PR body.
+  - What it finds never starts a second Fix round.
 - The PR body: `Closes #n.`, then the Reviewer's draft, then the Host's own lines: who worked it, how many Open findings were posted (or that there were none), what the Test run verified.
   - The Reviewer drafts it with the `mattpocock-skills:pr` skill; the draft is the last `<pr-body>` block of its last run's reply.
   - With no draft the Host's lines stand alone.
@@ -87,7 +101,7 @@ The Implementer has no diff to route on yet, so its prompt names every platform'
   - A finding with a path and a line on the new side of the diff is an inline comment on that line; one without is in the review's body.
   - If GitHub rejects the review, the Host posts it again with every finding in the body, each after its path and line.
   - Each comment starts with the loop's marker and a line naming the AFK loop's Reviewer, so it is told from the maintainer's own and stays out of the issues pasted into prompts.
-  - The Reviewer returns them in the last `<open-findings>` block of its review reply, one `<finding>` each. A point the issue's own text settles is not reported; a real problem outside the issue's work is.
+  - The Reviewer returns them in the last `<open-findings>` block of its reply, one `<finding>` each; the Host posts and counts only those of its last run. A point the issue's own text settles is not reported; a real problem outside the issue's work is.
 - A branch touching build configuration (package manifests, project files, build scripts) is tested and pushed like any other: none of it runs on the Host.
 - After every agent run the Host fetches the Sandbox's commits as a git bundle onto the local branch, subject and hash unchanged. Uncommitted changes left in the Sandbox are a failed Attempt.
 - The Sandbox is deleted when the issue's run ends; one left by an interrupted run is deleted at the next loop start.

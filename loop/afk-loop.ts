@@ -93,7 +93,9 @@ export interface Session {
 
 export interface IssueSession extends Session {
   implement(feedback?: string): Promise<ImplementerRun>;
-  review(feedback?: string): Promise<Review>;
+  review(): Promise<FirstReview>;
+  wrapUp(fixRound: FixRound): Promise<Review>;
+  putBack(head: string): Promise<void>;
 }
 
 export interface ImplementerRun {
@@ -105,6 +107,16 @@ export interface Review {
   readonly log: string;
   readonly openFindings: readonly OpenFinding[];
   readonly pullRequestDraft?: string;
+}
+
+export interface FirstReview extends Review {
+  readonly fixableFindings?: string;
+}
+
+export interface FixRound {
+  readonly fixableFindings: string;
+  readonly openFindings: readonly OpenFinding[];
+  readonly reviewedHead: string;
 }
 
 export interface Agents {
@@ -154,7 +166,7 @@ export interface AfkLoopOptions {
 export const defaultCap = 5;
 const priorities = ["priority:p0", "priority:p1", "priority:p2"];
 const implementedBy = "Implemented by the AFK loop's Implementer in the Sandbox.";
-const reviewedBy = "Reviewed by the AFK loop's Reviewer in the Sandbox; its fixes, if any, are on the branch.";
+const reviewedBy = "Reviewed by the AFK loop's Reviewer in the Sandbox.";
 const reviewerSays = `${loopMarker}\n**The AFK loop's Reviewer:**`;
 
 export function issueBranchPrefix(issueNumber: number): string {
@@ -225,54 +237,58 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
   let lastFailure: { head: string; log: string } | undefined;
   let feedback: string | undefined;
   let worktree: WorktreeState | undefined;
-  let lastGreenHead: string | undefined;
+  let fixRound: FixRound | undefined;
   let failures = 0;
   const reviewLogs: string[] = [];
-  let openFindings: readonly OpenFinding[] = [];
-  let pullRequestDraft: string | undefined;
   const fail = (nextFeedback: string) => {
     feedback = nextFeedback;
     failures += 1;
   };
   while (failures < attemptBudget) {
-    if (lastGreenHead) {
-      const review = await session.review(feedback);
-      reviewLogs.push(review.log);
-      ({ pullRequestDraft } = review);
-      if (!feedback) ({ openFindings } = review);
-      worktree = await session.inspect();
-    } else {
-      const run = await session.implement(feedback);
-      worktree = await session.inspect();
-      if (!worktree.dirty && worktree.commitsAhead === 0) {
-        return { issue: issue.number, kind: "handoff", branch, reason: "no-commits", lastReply: run.reply, implementerLog: run.log };
-      }
+    const run = await session.implement(feedback);
+    worktree = await session.inspect();
+    if (!fixRound && !worktree.dirty && worktree.commitsAhead === 0) {
+      return { issue: issue.number, kind: "handoff", branch, reason: "no-commits", lastReply: run.reply, implementerLog: run.log };
     }
     if (worktree.dirty) {
       fail(dirtyFeedback);
       continue;
     }
-    if (worktree.commitsAhead === 0 && lastGreenHead) {
-      fail(lostCommitsFeedback(lastGreenHead));
-      continue;
-    }
-    const reviewed: Outcome = { issue: issue.number, kind: "pull-request", branch, reviewLogs, platforms: worktree.platforms, openFindings, ...(pullRequestDraft ? { pullRequestDraft } : {}) };
-    if (worktree.head === lastGreenHead) return reviewed;
-    if (worktree.head === lastFailure?.head) {
-      fail(`${unchangedHeadFeedback}\n\n${lastFailure.log}`);
-      continue;
+    if (worktree.head !== fixRound?.reviewedHead) {
+      if (worktree.head === lastFailure?.head) {
+        fail(`${unchangedHeadFeedback}\n\n${lastFailure.log}`);
+        continue;
+      }
+      const testRun = await testChangedPlatforms(testRunner, session.exec, branch, worktree.platforms);
+      if (!testRun.passed) {
+        lastFailure = { head: worktree.head, log: testRun.log };
+        fail(testRun.log);
+        continue;
+      }
     }
 
-    const testRun = await testChangedPlatforms(testRunner, session.exec, branch, worktree.platforms);
-    if (!testRun.passed) {
-      lastFailure = { head: worktree.head, log: testRun.log };
-      fail(testRun.log);
-      continue;
-    }
-    if (lastGreenHead) return reviewed;
-    lastGreenHead = worktree.head;
+    const { head, platforms } = worktree;
+    const reviewerRun = async <R extends Review>(run: Promise<R>): Promise<R> => {
+      const review = await run;
+      await session.putBack(head);
+      reviewLogs.push(review.log);
+      return review;
+    };
+    const reviewed = ({ openFindings, pullRequestDraft }: Review): Outcome => ({
+      issue: issue.number,
+      kind: "pull-request",
+      branch,
+      reviewLogs,
+      platforms,
+      openFindings,
+      ...(pullRequestDraft ? { pullRequestDraft } : {}),
+    });
+    if (fixRound) return reviewed(await reviewerRun(session.wrapUp(fixRound)));
+    const review = await reviewerRun(session.review());
+    if (!review.fixableFindings) return reviewed(review);
+    fixRound = { fixableFindings: review.fixableFindings, openFindings: review.openFindings, reviewedHead: head };
     lastFailure = undefined;
-    feedback = undefined;
+    feedback = review.fixableFindings;
   }
   const log = worktree?.dirty && lastFailure ? `${dirtyFeedback}\n\nThe Test run before it reported:\n\n${lastFailure.log}` : (feedback ?? "");
   return {
@@ -282,12 +298,8 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
     reason: "attempt-budget",
     log,
     ...(lastFailure ? { rawLog: testRunner.rawLogPath(branch) } : {}),
-    ...(lastGreenHead ? { lastGreenHead } : {}),
+    ...(fixRound ? { lastGreenHead: fixRound.reviewedHead } : {}),
   };
-}
-
-function lostCommitsFeedback(lastGreenHead: string): string {
-  return `Your last run removed the branch's commits. Restore them: the last commit that passed the Test run is ${lastGreenHead}.`;
 }
 
 function withoutClosingKeywords(draft: string): string {

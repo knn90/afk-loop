@@ -7,7 +7,7 @@ import type { Loop } from "./loop-config.js";
 import { implementerPrompt } from "./implementer-prompt.js";
 import { platformsChanged, type Platform } from "./platforms.js";
 import { completionSignal } from "./prompt-parts.js";
-import { openFindings, pullRequestDraft, reviewerPrompt } from "./reviewer-prompt.js";
+import { fixableFindings, openFindings, pullRequestDraft, reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
 import { copyFileOut, guestExec, guestRepo, quote, repoExec, tartSandbox } from "./tart.js";
 
 const sandcastleSyncBase = "refs/sandcastle/sync-base";
@@ -56,6 +56,7 @@ function platformsChangedBetween(host: Host, platforms: readonly Platform[], bas
 interface AgentSandbox extends Omit<Session, "inspect"> {
   runAgent(name: string, logName: string, prompt: string): Promise<{ output: string; log: string }>;
   inspect(base: string): Promise<WorktreeState>;
+  putBack(head: string): Promise<void>;
   remove(): Promise<void>;
 }
 
@@ -132,6 +133,14 @@ export async function openSandbox(loop: Loop, host: Host, vm: string, branch: st
       const commitsAhead = Number(host.git("rev-list", "--count", `${base}..${head}`).trim());
       return { dirty, head, commitsAhead, platforms: await platformsChangedBetween(host, loop.platforms, base, head) };
     },
+    async putBack(head) {
+      await guestGit(`reset --hard --quiet ${head}`);
+      await guestGit("clean -ffdq");
+      await guestGit(`update-ref ${sandcastleSyncBase} HEAD`);
+      if (existsSync(worktree("rev-parse", "--path-format=absolute", "--git-path", "rebase-apply"))) worktree("am", "--quit");
+      worktree("reset", "--hard", "--quiet", head);
+      worktree("clean", "-ffdxq");
+    },
     close,
     async remove() {
       await close();
@@ -173,12 +182,17 @@ export function sandcastleAgents(loop: Loop, host: Host): Agents {
           const run = await runAgent("Implementer", implementerPrompt(loop, issue, branch, feedback));
           return { reply: run.output, log: run.log };
         },
-        async review(feedback) {
+        async review() {
           const changed = await platformsChangedBetween(host, loop.platforms, base, `refs/heads/${branch}`);
           const standards = changed.map((platform) => host.git("show", `${base}:${platform.standards}`).trim());
-          const run = await runAgent("Reviewer", reviewerPrompt({ project: loop, issue, branch, base, standards, feedback }));
+          const run = await runAgent("Reviewer", reviewerPrompt({ project: loop, issue, branch, base, standards }));
+          return { log: run.log, fixableFindings: fixableFindings(run.output), openFindings: openFindings(run.output), pullRequestDraft: pullRequestDraft(run.output) };
+        },
+        async wrapUp(fixRound) {
+          const run = await runAgent("Reviewer", wrapUpPrompt({ project: loop, issue, branch, base, fixRound }));
           return { log: run.log, openFindings: openFindings(run.output), pullRequestDraft: pullRequestDraft(run.output) };
         },
+        putBack: sandbox.putBack,
         inspect: () => sandbox.inspect(base),
         async close() {
           await sandbox.close();

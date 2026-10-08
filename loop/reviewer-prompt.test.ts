@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import type { Issue } from "./afk-loop.js";
+import type { Issue, OpenFinding } from "./afk-loop.js";
 import type { Platform } from "./platforms.js";
-import { openFindings, pullRequestDraft, reviewerPrompt } from "./reviewer-prompt.js";
+import { fixableFindings, openFindings, pullRequestDraft, reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
 
 describe("reviewerPrompt", () => {
   test("reads the glossary, and the glossary map when it exists", () => {
@@ -48,105 +48,97 @@ describe("reviewerPrompt", () => {
     const prompt = sut.prompt();
 
     assert.ok(prompt.indexOf("`mattpocock-skills:code-review` skill") < prompt.indexOf("`mattpocock-skills:codebase-design` skill"));
-    assert.match(prompt, /Fix every Spec, Standards and Design finding/);
-    assert.match(prompt, /a deepening that reaches beyond this diff, stays unfixed/);
+    assert.match(prompt, /record each shallow module, hypothetical seam and test that reaches past an interface as a Design finding/);
   });
 
-  test("the agent builds and tests in the Sandbox, and the loop's Test run decides", () => {
+  test("the Reviewer changes no file, and is told the Host discards what it leaves", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt();
+
+    assert.match(prompt, /- You change no file and commit nothing\. The Host puts the branch back at the commit the Test run passed, whatever your run leaves behind\./);
+    assert.ok(!prompt.includes("Fix every"));
+    assert.ok(!prompt.includes("Commit every fix"));
+    assert.ok(!prompt.includes("all committed"));
+  });
+
+  test("the Reviewer may build and test in the Sandbox to check a finding, with no Test run after it", () => {
     const sut = makeSUT();
 
     const prompt = sut.prompt();
 
     assert.ok(
       prompt.includes(
-        "- This Sandbox is a macOS VM with Node and Go. Build and test your work before you finish: for `web/`, run `make web`; for `server/`, run `make server`. The loop's Test run follows your run and decides: it covers each of the two folders your branch changes, with any failures returned to you.",
+        "- This Sandbox is a macOS VM with Node and Go. To check a finding you may build and test: for `web/`, run `make web`; for `server/`, run `make server`. No Test run follows your run.",
       ),
     );
     assert.ok(!prompt.includes("container"));
   });
 
-  test("asks for fixes committed in the issue's commit format", () => {
+  test("carries the four-part test for an Open finding, every other finding being Fixable", () => {
     const sut = makeSUT();
 
     const prompt = sut.prompt();
 
-    assert.match(prompt, /Commit every fix on this branch as `\[#7\] - Imperative summary`/);
+    assert.ok(
+      prompt.includes(
+        [
+          "A finding is Open when any of these holds; otherwise it is Fixable:",
+          "  - fixing it changes behaviour the issue asked for, or the issue does not say which way to go;",
+          "  - there is more than one reasonable fix, with different results for the user or for the design;",
+          "  - the fix reaches outside this diff: another module, or a later issue's work;",
+          "  - the Reviewer is not sure the finding is valid.",
+        ].join("\n"),
+      ),
+    );
   });
 
-  test("a run with host feedback fixes only that, without another review", () => {
-    const sut = makeSUT();
-
-    const prompt = sut.prompt("error: boom");
-
-    assert.ok(!prompt.includes("code-review"));
-    assert.ok(!prompt.includes("codebase-design"));
-    assert.match(prompt, /Fix only what <host-feedback> reports/);
-  });
-
-  test("a first run carries no host feedback", () => {
-    const sut = makeSUT();
-
-    const prompt = sut.prompt();
-
-    assert.ok(!prompt.includes("<host-feedback>"));
-  });
-
-  test("host feedback precedes the instructions and its fixes are part of done", () => {
-    const sut = makeSUT();
-
-    const prompt = sut.prompt("error: boom");
-
-    assert.ok(prompt.indexOf("<host-feedback>\nerror: boom\n</host-feedback>") < prompt.indexOf("How to work:"));
-    assert.match(prompt, /Done means[^\n]*every failure in <host-feedback> is fixed/);
-  });
-
-  test("a review asks for each Open finding with its text and, where it has one, its path and line", () => {
+  test("there is no third kind: a point the issue settles is not reported, and a real problem outside the issue's work is an Open finding", () => {
     const sut = makeSUT();
 
     const prompt = sut.prompt();
 
-    assert.match(prompt, /Every finding you left unfixed is an Open finding: the maintainer must decide it\./);
+    assert.match(prompt, /There is no third kind\. A point the <issue>'s own text settles is not a finding: do not report it\. A real problem that is not this issue's work is an Open finding\./);
+  });
+
+  test("asks for the Fixable findings as text for the Implementer", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt();
+
+    assert.match(prompt, /between `<fixable-findings>` and `<\/fixable-findings>`, as text for the Implementer[^\n]*With none, leave the block empty\./);
+  });
+
+  test("asks for each Open finding with its text and, where it has one, its path and line", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt();
+
+    assert.match(prompt, /Open findings: the maintainer must decide them\./);
     assert.match(prompt, /between `<open-findings>` and `<\/open-findings>`[^\n]*`<finding path="path\/to\/file" line="12">[^\n]*<\/finding>`/);
     assert.match(prompt, /a line on the new side of `git diff abc123\.\.\.HEAD`[^\n]*Leave both out when the finding has no single line/);
     assert.match(prompt, /The Host posts each one as a review comment on the PR/);
   });
 
-  test("a point the issue settles is not reported, and a real problem outside the issue's work is an Open finding", () => {
+  test("carries no host feedback and asks for no count of Open findings", () => {
     const sut = makeSUT();
 
     const prompt = sut.prompt();
 
-    assert.match(prompt, /A point the <issue>'s own text settles is not a finding: do not report it\. A real problem that is not this issue's work is an Open finding\./);
-  });
-
-  test("a review asks for no count of Open findings and no list for the PR body", () => {
-    const sut = makeSUT();
-
-    const prompt = sut.prompt();
-
+    assert.ok(!prompt.includes("host-feedback"));
     assert.ok(!prompt.includes("<open-findings>N"));
     assert.ok(!prompt.includes("unfixed-findings"));
   });
 });
 
 describe("reviewerPrompt, PR body", () => {
-  test("a review drafts the PR body with the pr skill, after its fixes", () => {
+  test("drafts the PR body with the pr skill only when it has no Fixable finding", () => {
     const sut = makeSUT();
 
     const prompt = sut.prompt();
 
-    assert.match(prompt, /invoke the `mattpocock-skills:pr` skill with the Skill tool and draft the PR body for `git diff abc123\.\.\.HEAD`/);
-    assert.ok(prompt.indexOf("Fix every Spec, Standards and Design finding") < prompt.indexOf("`mattpocock-skills:pr` skill"));
-    assert.match(prompt, /Done means every finding is fixed or answered, the draft is in your reply between `<pr-body>` and `<\/pr-body>`, all committed/);
-  });
-
-  test("a run with host feedback drafts the PR body too", () => {
-    const sut = makeSUT();
-
-    const prompt = sut.prompt("error: boom");
-
-    assert.match(prompt, /`mattpocock-skills:pr` skill/);
-    assert.match(prompt, /Done means every failure in <host-feedback> is fixed, the draft is in your reply between `<pr-body>` and `<\/pr-body>`/);
+    assert.match(prompt, /With no Fixable finding, invoke the `mattpocock-skills:pr` skill with the Skill tool and draft the PR body for `git diff abc123\.\.\.HEAD`\. With a Fixable finding, draft none/);
+    assert.match(prompt, /Done means every finding is in one of the two blocks and, with no Fixable finding, the draft is in your reply between `<pr-body>` and `<\/pr-body>`\. Then reply with <promise>COMPLETE<\/promise>\./);
   });
 
   test("the draft starts at the Summary and leaves the Closes line to the Host", () => {
@@ -163,6 +155,101 @@ describe("reviewerPrompt, PR body", () => {
     const prompt = sut.prompt();
 
     assert.match(prompt, /Evidence: quote only output of commands you run in this Sandbox\. The Host adds what the Test run verified\./);
+  });
+});
+
+describe("wrapUpPrompt", () => {
+  test("carries run 1's Fixable findings, and its Open findings with their paths and lines", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.wrapUp();
+
+    assert.match(prompt, /<fixable-findings>\nweb\/src\/streak\.ts:12: rename `x`\.\n<\/fixable-findings>/);
+    assert.match(
+      prompt,
+      /<open-findings>\n<finding path="web\/src\/streak\.ts" line="12">The streak resets at UTC midnight\.<\/finding>\n<finding>No test covers a skipped day\.<\/finding>\n<\/open-findings>/,
+    );
+  });
+
+  test("names the commit run 1 reviewed and the Fix round's commits after it", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.wrapUp();
+
+    assert.match(prompt, /You reviewed it at `def456`\.[^\n]*`git log def456\.\.HEAD`, and there may be none/);
+  });
+
+  test("asks for no new review and no new Fixable finding", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.wrapUp();
+
+    assert.ok(!prompt.includes("code-review"));
+    assert.ok(!prompt.includes("codebase-design"));
+    assert.ok(!prompt.includes("<coding-standards>"));
+    assert.match(prompt, /Do not review the branch again, and report no new Fixable finding: there is no second Fix round\./);
+  });
+
+  test("asks for the final Open findings: run 1's restated against the final diff, plus each Fixable finding not fixed", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.wrapUp();
+
+    assert.match(prompt, /Check each Fixable finding against `git diff abc123\.\.\.HEAD`\. One that was not fixed becomes an Open finding\./);
+    assert.match(prompt, /Restate each of your Open findings against that diff: its text as it holds now, its `path` and `line` as HEAD has them\./);
+    assert.match(prompt, /Give the final Open findings, yours restated and each Fixable finding not fixed, in your reply between `<open-findings>` and `<\/open-findings>`[^\n]*`<finding path="path\/to\/file" line="12">/);
+  });
+
+  test("drafts the PR body with the pr skill, for the branch as the Fix round left it", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.wrapUp();
+
+    assert.match(prompt, /Then invoke the `mattpocock-skills:pr` skill with the Skill tool and draft the PR body for `git diff abc123\.\.\.HEAD`\./);
+    assert.match(prompt, /The draft starts at `## Summary`[^\n]*`Closes #7\.`/);
+    assert.match(prompt, /the draft is in your reply between `<pr-body>` and `<\/pr-body>`\. Then reply with <promise>COMPLETE<\/promise>\./);
+  });
+
+  test("the Reviewer changes no file in the wrap-up either", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.wrapUp();
+
+    assert.match(prompt, /- You change no file and commit nothing\./);
+    assert.match(prompt, /No Test run follows your run\./);
+  });
+
+  test("with no Open finding from run 1 the block is empty", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.wrapUp([]);
+
+    assert.match(prompt, /<open-findings>\n\n<\/open-findings>/);
+  });
+});
+
+describe("fixableFindings", () => {
+  test("a reply with Fixable findings gives their text", () => {
+    const sut = makeSUT();
+
+    const findings = sut.fixableFindings("Done.\n<fixable-findings>\n1. web/src/streak.ts:12: rename `x`.\n2. Add the missing test.\n</fixable-findings>");
+
+    assert.equal(findings, "1. web/src/streak.ts:12: rename `x`.\n2. Add the missing test.");
+  });
+
+  test("an empty block or a missing one gives none", () => {
+    const sut = makeSUT();
+
+    assert.equal(sut.fixableFindings("<fixable-findings>\n</fixable-findings>"), undefined);
+    assert.equal(sut.fixableFindings("All clean."), undefined);
+  });
+
+  test("the last block in the reply is the one read", () => {
+    const sut = makeSUT();
+
+    const findings = sut.fixableFindings("They go in `<fixable-findings>…</fixable-findings>`.\n<fixable-findings>Rename `x`.</fixable-findings>");
+
+    assert.equal(findings, "Rename `x`.");
   });
 });
 
@@ -250,12 +337,25 @@ function platform(name: string): Platform {
 
 const project = { repo: "acme/Habitat", platforms: [platform("web"), platform("server")], image: { tools: "Node and Go" } };
 
+const runOneOpenFindings: OpenFinding[] = [
+  { text: "The streak resets at UTC midnight.", at: { path: "web/src/streak.ts", line: 12 } },
+  { text: "No test covers a skipped day." },
+];
+
 function makeSUT(standards = ["Prefer value types."]) {
   const issue: Issue = { number: 7, title: "Fix streak", body: "Body", labels: [], openBlockers: 0 };
   return {
+    fixableFindings,
     openFindings,
     pullRequestDraft,
-    prompt: (feedback?: string) =>
-      reviewerPrompt({ project, issue, branch: "issue/7-fix-streak", base: "abc123", standards, feedback }),
+    prompt: () => reviewerPrompt({ project, issue, branch: "issue/7-fix-streak", base: "abc123", standards }),
+    wrapUp: (open: OpenFinding[] = runOneOpenFindings) =>
+      wrapUpPrompt({
+        project,
+        issue,
+        branch: "issue/7-fix-streak",
+        base: "abc123",
+        fixRound: { fixableFindings: "web/src/streak.ts:12: rename `x`.", openFindings: open, reviewedHead: "def456" },
+      }),
   };
 }

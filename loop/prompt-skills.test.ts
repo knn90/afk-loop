@@ -3,7 +3,7 @@ import { describe, test } from "node:test";
 import type { Issue } from "./afk-loop.js";
 import { implementerPrompt } from "./implementer-prompt.js";
 import type { Platform } from "./platforms.js";
-import { reviewerPrompt } from "./reviewer-prompt.js";
+import { reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
 import { requiredSkills, skill } from "./skills-plugin.js";
 
 describe("the skills the prompts name", () => {
@@ -32,6 +32,6 @@ function everyPrompt(): string[] {
   return [
     implementerPrompt(project, issue, branch),
     reviewerPrompt({ project, issue, branch, base, standards: [] }),
-    reviewerPrompt({ project, issue, branch, base, standards: [], feedback: "error: boom" }),
+    wrapUpPrompt({ project, issue, branch, base, fixRound: { fixableFindings: "Rename `x`.", openFindings: [], reviewedHead: "def456" } }),
   ];
 }

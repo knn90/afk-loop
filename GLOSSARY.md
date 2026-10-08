@@ -17,14 +17,20 @@ An open `ready-for-agent` issue with no open blocker, no linked open PR and no p
 _Avoid_: candidate, ticket, task
 
 **Implementer**:
-The Sandbox agent that writes the tests and code for one Eligible issue.
+The Sandbox agent that writes the tests and code for one Eligible issue, and fixes the Reviewer's Fixable findings.
 
 **Reviewer**:
-The Sandbox agent that reviews the Implementer's branch against the issue and coding standards, fixes what it finds, and drafts the PR body.
+The Sandbox agent that reviews the Implementer's green branch against the issue and coding standards, sorts its findings into Fixable and Open, and drafts the PR body. It changes no file.
+
+**Fixable finding**:
+A finding the Reviewer is sure is valid, and that the Implementer can fix inside this diff with no decision from the maintainer.
 
 **Open finding**:
-A finding the Reviewer left unfixed: the maintainer must decide it. It is posted as a PR review comment. A real problem outside the issue's work is one; a point the issue itself settles is not a finding.
+A finding the maintainer must decide, posted as a PR review comment. Any finding the Reviewer doubts is one, and so are a Fixable finding left unfixed and a real problem outside the issue's work. A point the issue itself settles is not a finding.
 _Avoid_: declined finding
+
+**Fix round**:
+The Implementer's one round on the Reviewer's Fixable findings, after its branch is green.
 
 **Platform**:
 One folder of the project with its own coding standards and Test run steps, handed to the loop by the project's `.sandcastle/loop.config.ts`. It is present unless it names a `presentWhen` file the branch lacks. For example iOS for `ios/` (Xcode), Android for `android/` (Gradle, present once `android/gradlew` is).
@@ -41,7 +47,7 @@ The check at the start of `run` and `smoke`, beside the env and Tart checks, of 
 One agent run followed by its Test run.
 
 **Attempt budget**:
-The 3 failed Attempts an issue may spend, shared by Implementer and Reviewer. Uncommitted changes in the Sandbox after an agent run count as a failure. The Implementer's green Attempt and a Reviewer run with no new commits spend none.
+The 3 failed Attempts an issue may spend, shared by the Implementer's first round and its Fix round. Uncommitted changes in the Sandbox after an Implementer run count as a failure. A green Attempt, a Fix round with no new commits and a Reviewer run spend none.
 _Avoid_: retries, max tries
 
 **Handoff**:
