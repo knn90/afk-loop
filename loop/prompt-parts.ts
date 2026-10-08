@@ -45,10 +45,21 @@ function testRunCovers(platforms: readonly Platform[]): string {
   return `each of the ${counts[platforms.length] ?? platforms.length} folders your branch changes`;
 }
 
-function sandboxBuilds({ image, platforms }: Project): string {
-  const vm = image.tools ? `a macOS VM with ${image.tools}` : "a macOS VM";
-  const builds = platforms.map((platform) => `for \`${folder(platform)}\`, ${platform.agentBuildHint}`).join("; ");
-  return `- This Sandbox is ${vm}. Build and test your work before you finish: ${builds}. The loop's Test run follows your run and decides: it covers ${testRunCovers(platforms)}, with any failures returned to you.`;
+function sandboxVm({ image }: Project): string {
+  return image.tools ? `a macOS VM with ${image.tools}` : "a macOS VM";
+}
+
+function buildHints({ platforms }: Project): string {
+  return platforms.map((platform) => `for \`${folder(platform)}\`, ${platform.agentBuildHint}`).join("; ");
+}
+
+function sandboxBuilds(project: Project): string {
+  return `- This Sandbox is ${sandboxVm(project)}. Build and test your work before you finish: ${buildHints(project)}. The loop's Test run follows your run and decides: it covers ${testRunCovers(project.platforms)}, with any failures returned to you.`;
+}
+
+export function reviewerSandbox(project: Project): string {
+  return `- This Sandbox is ${sandboxVm(project)}. To check a finding you may build and test: ${buildHints(project)}. No Test run follows your run.
+- The Host pushes, opens the PR and posts your Open findings: this Sandbox has no GitHub access.`;
 }
 
 export function sandboxLimits(project: Project): string {
