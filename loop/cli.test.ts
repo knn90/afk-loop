@@ -7,7 +7,7 @@ import { describe, test } from "node:test";
 import { afkLoop, type Command } from "./cli.js";
 
 describe("afkLoop", () => {
-  for (const [name, ...args] of [["run", "--cap", "2", "--auto-merge"], ["smoke"], ["build-image"]] as const) {
+  for (const [name, ...args] of [["run", "--cap", "2"], ["smoke"], ["build-image"]] as const) {
     test(`${name} gets the repo's config and Host, from the repo root and from a subfolder`, async () => {
       const root = makeRepo();
       for (const cwd of [root, join(root, "android", "app")]) {
@@ -46,7 +46,7 @@ describe("afkLoop", () => {
 
 // MARK: - Helpers
 
-const usage = "usage: afk-loop run [--cap <n>] [--auto-merge] | smoke | build-image";
+const usage = "usage: afk-loop run [--cap <n>] | smoke | build-image";
 
 function makeRepo(config = 'export default { name: "habitat", vms: { base: "habitat-base" } };\n'): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "afk-loop-cli-")));

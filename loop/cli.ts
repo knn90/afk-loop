@@ -8,7 +8,7 @@ import { smoke } from "./smoke.js";
 export type Command = (loop: Loop, host: Host, args: readonly string[]) => Promise<void>;
 type CommandName = "run" | "smoke" | "build-image";
 
-const usage = "usage: afk-loop run [--cap <n>] [--auto-merge] | smoke | build-image";
+const usage = "usage: afk-loop run [--cap <n>] | smoke | build-image";
 const loopCommands: Record<CommandName, Command> = { run, smoke, "build-image": buildImage };
 
 function isCommandName(name: string | undefined, commands: Record<CommandName, Command>): name is CommandName {

@@ -83,6 +83,10 @@ export function gh(...args: string[]): string {
   return execFileSync("gh", args, { encoding: "utf8" });
 }
 
+export function ghWithInput(input: string, ...args: string[]): string {
+  return execFileSync("gh", args, { encoding: "utf8", input });
+}
+
 function gitAt(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd, encoding: "utf8" });
 }

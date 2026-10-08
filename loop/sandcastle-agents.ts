@@ -4,12 +4,10 @@ import { claudeCode, createSandbox } from "@ai-hero/sandcastle";
 import { issueBranchPrefix, type Agents, type Session, type WorktreeState } from "./afk-loop.js";
 import { branchFileName, check, lines, logsDir, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
-import { implementerPrompt } from "./implementer-prompt.js";
+import { findingsLeft, implementerPrompt } from "./implementer-prompt.js";
 import { platformsChanged, type Platform } from "./platforms.js";
 import { completionSignal } from "./prompt-parts.js";
-import { drafterPrompt, pullRequestDraft } from "./drafter-prompt.js";
-import { hasOpenFindings, reviewerPrompt, unfixedFindings } from "./reviewer-prompt.js";
-import { revisionPrompt } from "./revision-prompt.js";
+import { answeredOpenFindings, firstReview, pullRequestDraft, reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
 import { copyFileOut, guestExec, guestRepo, quote, repoExec, tartSandbox } from "./tart.js";
 
 const sandcastleSyncBase = "refs/sandcastle/sync-base";
@@ -55,26 +53,10 @@ function platformsChangedBetween(host: Host, platforms: readonly Platform[], bas
   return platformsChanged(platforms, changedPaths, async (path) => succeeds(host, "cat-file", "-e", `${head}:${path}`));
 }
 
-function mergeBaseBranch(host: Host, issueNumber: number, branch: string, baseBranch: string, base: string): { conflicts: string[] } {
-  const head = commitAt(host, `refs/heads/${branch}`);
-  if (succeeds(host, "merge-base", "--is-ancestor", base, head)) return { conflicts: [] };
-  let tree: string;
-  try {
-    tree = host.git("merge-tree", "--write-tree", "--name-only", "--no-messages", head, base).trim();
-  } catch (error) {
-    const { status, stdout } = error as { status?: number; stdout?: string };
-    if (status !== 1 || !stdout) throw error;
-    return { conflicts: lines(stdout).slice(1) };
-  }
-  const merge = host.git("commit-tree", tree, "-p", head, "-p", base, "-m", `[#${issueNumber}] - Merge ${baseBranch} into ${branch}`).trim();
-  host.git("update-ref", `refs/heads/${branch}`, merge, head);
-  return { conflicts: [] };
-}
-
 interface AgentSandbox extends Omit<Session, "inspect"> {
   runAgent(name: string, logName: string, prompt: string): Promise<{ output: string; log: string }>;
-  runAgentKeepingHead(name: string, logName: string, prompt: string): Promise<{ output: string; log: string }>;
-  inspect(base: string, pushed?: string): Promise<WorktreeState>;
+  inspect(base: string): Promise<WorktreeState>;
+  putBack(head: string): Promise<void>;
   remove(): Promise<void>;
 }
 
@@ -114,6 +96,14 @@ export async function openSandbox(loop: Loop, host: Host, vm: string, branch: st
     host.git("-c", "fetch.fsckObjects=true", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", hostBundle, "HEAD");
     rmSync(hostBundle);
   };
+  const quitRebaseApply = () => {
+    if (existsSync(worktree("rev-parse", "--path-format=absolute", "--git-path", "rebase-apply"))) worktree("am", "--quit");
+  };
+  const cleanWorktreeAt = (head: string) => {
+    worktree("reset", "--hard", "--quiet", head);
+    worktree("clean", "-ffdxq");
+  };
+  const markSynced = () => guestGit(`update-ref ${sandcastleSyncBase} HEAD`);
   const close = async () => {
     await sandbox.close();
     clearRunMarker(host, branch);
@@ -137,29 +127,23 @@ export async function openSandbox(loop: Loop, host: Host, vm: string, branch: st
   return {
     exec: repoExec(vm),
     runAgent,
-    async runAgentKeepingHead(name, logName, prompt) {
-      const kept = worktree("rev-parse", "HEAD");
-      try {
-        return await runAgent(name, logName, prompt);
-      } finally {
-        if (existsSync(worktree("rev-parse", "--path-format=absolute", "--git-path", "rebase-apply"))) worktree("am", "--quit");
-        worktree("reset", "--hard", "--quiet", kept);
-        worktree("clean", "-ffdxq");
-      }
-    },
-    async inspect(base, pushed = base) {
+    async inspect(base) {
       const head = await guestGit("rev-parse HEAD");
       const dirty = (await guestGit("status --porcelain --untracked-files=all")) !== "";
       await fetchFromSandbox(head);
-      if (existsSync(worktree("rev-parse", "--path-format=absolute", "--git-path", "rebase-apply"))) worktree("am", "--quit");
+      quitRebaseApply();
       if (dirty) worktree("reset", "--quiet", head);
-      else {
-        worktree("reset", "--hard", "--quiet", head);
-        worktree("clean", "-ffdxq");
-      }
-      await guestGit(`update-ref ${sandcastleSyncBase} HEAD`);
-      const commitsAhead = Number(host.git("rev-list", "--count", `${pushed}..${head}`).trim());
+      else cleanWorktreeAt(head);
+      await markSynced();
+      const commitsAhead = Number(host.git("rev-list", "--count", `${base}..${head}`).trim());
       return { dirty, head, commitsAhead, platforms: await platformsChangedBetween(host, loop.platforms, base, head) };
+    },
+    async putBack(head) {
+      await guestGit(`reset --hard --quiet ${head}`);
+      await guestGit("clean -ffdq");
+      await markSynced();
+      quitRebaseApply();
+      cleanWorktreeAt(head);
     },
     close,
     async remove() {
@@ -189,76 +173,37 @@ export function sandcastleAgents(loop: Loop, host: Host): Agents {
       host.fetchFromGitHub(loop.repo, loop.baseBranch);
       const base = commitAt(host, remoteBase(loop));
       const sandbox = await openSandbox(loop, host, loop.vms.issue(issue.number), branch, `#${issue.number}`);
-      const agentRuns = { Implementer: 0, Reviewer: 0, Drafter: 0 };
+      const agentRuns = { Implementer: 0, Reviewer: 0 };
       const logName = (role: keyof typeof agentRuns) => {
         agentRuns[role] += 1;
         return `issue-${issue.number}-${role.toLowerCase()}-${agentRuns[role]}`;
       };
       const runAgent = (role: keyof typeof agentRuns, prompt: string) => sandbox.runAgent(role, logName(role), prompt);
+      const standards = async () => {
+        const changed = await platformsChangedBetween(host, loop.platforms, base, `refs/heads/${branch}`);
+        return changed.map((platform) => host.git("show", `${base}:${platform.standards}`).trim());
+      };
 
       return {
         exec: sandbox.exec,
-        async implement(feedback) {
-          await runAgent("Implementer", implementerPrompt(loop, issue, branch, feedback));
+        async implement(feedback, fixableFindings) {
+          const run = await runAgent("Implementer", implementerPrompt(loop, issue, branch, feedback, fixableFindings));
+          return { reply: run.output, log: run.log, findingsLeft: findingsLeft(run.output) };
         },
-        async review(feedback) {
-          const changed = await platformsChangedBetween(host, loop.platforms, base, `refs/heads/${branch}`);
-          const standards = changed.map((platform) => host.git("show", `${base}:${platform.standards}`).trim());
-          const run = await runAgent("Reviewer", reviewerPrompt({ project: loop, issue, branch, base, standards, feedback }));
-          return { log: run.log, openFindings: hasOpenFindings(run.output), unfixedFindings: unfixedFindings(run.output) };
+        async review() {
+          const run = await runAgent("Reviewer", reviewerPrompt({ project: loop, issue, branch, base, standards: await standards() }));
+          return { log: run.log, ...firstReview(run.output) };
         },
-        async draft(testRun) {
-          const run = await sandbox.runAgentKeepingHead("Drafter", logName("Drafter"), drafterPrompt({ repo: loop.repo, issue, branch, base, testRun }));
-          return pullRequestDraft(run.output);
+        async wrapUp(fixRound) {
+          const run = await runAgent("Reviewer", wrapUpPrompt({ project: loop, issue, branch, base, standards: await standards(), fixRound }));
+          return { log: run.log, openFindings: answeredOpenFindings(run.output), pullRequestDraft: pullRequestDraft(run.output) };
         },
+        putBack: sandbox.putBack,
         inspect: () => sandbox.inspect(base),
         async close() {
           await sandbox.close();
           const noCommits = host.git("rev-list", "--count", `${base}..refs/heads/${branch}`).trim() === "0";
           if (noCommits && !worktreePath(host, branch)) host.git("branch", "-D", branch);
-        },
-      };
-    },
-
-    async startRevision(pullRequest, comments) {
-      const { branch, issue } = pullRequest;
-      host.git("worktree", "prune");
-      host.fetchFromGitHub(loop.repo, loop.baseBranch, branch);
-      const base = commitAt(host, remoteBase(loop));
-      const pushed = commitAt(host, `refs/remotes/origin/${branch}`);
-      const local = `refs/heads/${branch}`;
-      const path = worktreePath(host, branch);
-
-      if (succeeds(host, "rev-parse", "--verify", "--quiet", local) && !isLeftover(host, branch)) {
-        const unpushed = host.git("rev-list", "--count", `${pushed}..${local}`).trim() !== "0";
-        if (unpushed || (path && !path.startsWith(worktreesDir(host)))) return { kind: "hand-work" };
-      }
-      if (path) host.git("worktree", "remove", "--force", path);
-      host.git("update-ref", local, pushed);
-      clearRunMarker(host, branch);
-
-      const { conflicts } = mergeBaseBranch(host, issue.number, branch, loop.baseBranch, base);
-      if (conflicts.length > 0) return { kind: "merge-conflict", files: conflicts };
-
-      const sandbox = await openSandbox(loop, host, loop.vms.issue(issue.number), branch, `#${issue.number}`);
-      const logName = (run: number) => `issue-${issue.number}-revision-${pullRequest.revision}-implementer-${run}`;
-      let runs = 0;
-      while (existsSync(`${logsDir(host)}${logName(runs + 1)}.log`)) runs += 1;
-      return {
-        kind: "session",
-        session: {
-          exec: sandbox.exec,
-          close: sandbox.close,
-          async revise(feedback) {
-            runs += 1;
-            const prompt = revisionPrompt({ project: loop, issue, pullRequest: pullRequest.number, branch, base, comments, feedback });
-            return sandbox.runAgent("Implementer", logName(runs), prompt);
-          },
-          inspect: () => sandbox.inspect(base, pushed),
-          async discard() {
-            await sandbox.remove();
-            host.git("update-ref", local, pushed);
-          },
         },
       };
     },

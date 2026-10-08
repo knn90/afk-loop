@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { Issue } from "./afk-loop.js";
-import { drafterPrompt } from "./drafter-prompt.js";
 import { implementerPrompt } from "./implementer-prompt.js";
 import type { Platform } from "./platforms.js";
-import { reviewerPrompt } from "./reviewer-prompt.js";
-import { revisionPrompt } from "./revision-prompt.js";
+import { reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
 import { requiredSkills, skill } from "./skills-plugin.js";
 
 describe("the skills the prompts name", () => {
@@ -34,8 +32,8 @@ function everyPrompt(): string[] {
   return [
     implementerPrompt(project, issue, branch),
     reviewerPrompt({ project, issue, branch, base, standards: [] }),
-    reviewerPrompt({ project, issue, branch, base, standards: [], feedback: "error: boom" }),
-    drafterPrompt({ repo: project.repo, issue, branch, base, testRun: "passed" }),
-    revisionPrompt({ project, issue, pullRequest: 21, branch, base, comments: [{ id: "C1", kind: "conversation", author: "knn90", body: "Rename.", replies: [] }] }),
+    implementerPrompt(project, issue, branch, undefined, "Rename `x`."),
+    wrapUpPrompt({ project, issue, branch, base, standards: [], fixRound: { fixableFindings: "Rename `x`.", openFindings: [], reviewedHead: "def456" } }),
+    wrapUpPrompt({ project, issue, branch, base, standards: [], fixRound: { fixableFindings: "Rename `x`.", openFindings: [], reviewedHead: "def456", failed: true } }),
   ];
 }

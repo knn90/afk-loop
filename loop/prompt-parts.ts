@@ -5,11 +5,26 @@ import { folder, type Platform } from "./platforms.js";
 
 export const completionSignal = "<promise>COMPLETE</promise>";
 
-export const glossaryRule = "Read GLOSSARY.md and use its vocabulary; if GLOSSARY-MAP.md exists, follow it to the context you change.";
+export const glossaryRule = "Read GLOSSARY.md and use its vocabulary; if GLOSSARY-MAP.md exists, follow it to the glossary of the code you work on.";
+
+function blocks(reply: string, tag: string): RegExpExecArray[] {
+  return [...reply.matchAll(new RegExp(`<${tag}>((?:(?!<${tag}>)[\\s\\S])*?)</${tag}>`, "g"))];
+}
 
 export function lastBlock(reply: string, tag: string): string | undefined {
-  const blocks = [...reply.matchAll(new RegExp(`<${tag}>((?:(?!<${tag}>)[\\s\\S])*?)</${tag}>`, "g"))];
-  return blocks.at(-1)?.[1]?.trim() || undefined;
+  const text = blocks(reply, tag).at(-1)?.[1]?.trim();
+  return text && !/^none\.?$/i.test(text) ? text : undefined;
+}
+
+export function replyBlocks(tags: readonly string[], empty: string): string {
+  const [these, theirTags] = tags.length > 1 ? ["these blocks, each once and in this order", "these tags"] : ["this block, once", "its tags"];
+  return `End your reply with ${these}, then ${completionSignal}. ${empty} Write ${theirTags} nowhere else in your reply.
+
+${tags.map((tag) => `<${tag}>\n</${tag}>`).join("\n")}`;
+}
+
+export function hasBlock(reply: string, tag: string): boolean {
+  return blocks(reply, tag).length > 0;
 }
 
 export function issueBlock(issue: Issue): string {
@@ -45,10 +60,21 @@ function testRunCovers(platforms: readonly Platform[]): string {
   return `each of the ${counts[platforms.length] ?? platforms.length} folders your branch changes`;
 }
 
-function sandboxBuilds({ image, platforms }: Project): string {
-  const vm = image.tools ? `a macOS VM with ${image.tools}` : "a macOS VM";
-  const builds = platforms.map((platform) => `for \`${folder(platform)}\`, ${platform.agentBuildHint}`).join("; ");
-  return `- This Sandbox is ${vm}. Build and test your work before you finish: ${builds}. The loop's Test run follows your run and decides: it covers ${testRunCovers(platforms)}, with any failures returned to you.`;
+function sandboxVm({ image }: Project): string {
+  return image.tools ? `a macOS VM with ${image.tools}` : "a macOS VM";
+}
+
+function buildHints({ platforms }: Project): string {
+  return platforms.map((platform) => `for \`${folder(platform)}\`, ${platform.agentBuildHint}`).join("; ");
+}
+
+function sandboxBuilds(project: Project): string {
+  return `- This Sandbox is ${sandboxVm(project)}. Build and test your work before you finish: ${buildHints(project)}. The loop's Test run follows your run and decides: it covers ${testRunCovers(project.platforms)}, with any failures returned to you.`;
+}
+
+export function reviewerSandbox(project: Project): string {
+  return `- This Sandbox is ${sandboxVm(project)}. To check a finding you may build and test: ${buildHints(project)}. No Test run follows your run.
+- The Host pushes, opens the PR and posts your Open findings: this Sandbox has no GitHub access.`;
 }
 
 export function sandboxLimits(project: Project): string {
@@ -56,9 +82,4 @@ export function sandboxLimits(project: Project): string {
 - The Host pushes, opens the PR and updates the issue: this Sandbox has no GitHub access.`;
 }
 
-export function revisionSandboxLimits(project: Project): string {
-  return `${sandboxBuilds(project)}
-- The Host pushes, posts your replies on the PR and resolves the \`fixed\` threads once the branch is green: this Sandbox has no GitHub access.`;
-}
-
-export const doneTail = `all committed, and \`git status\` is clean. Then reply with ${completionSignal}.`;
+export const committed = "all committed, and `git status` is clean";

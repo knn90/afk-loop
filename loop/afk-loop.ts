@@ -2,14 +2,15 @@ import {
   attemptBudget,
   budgetSpentWhy,
   dirtyFeedback,
+  fenced,
   lastAttemptDetails,
+  loopMarker,
   readyForAgent,
   readyForHuman,
   unchangedHeadFeedback,
 } from "./loop-rules.js";
 import { linkedIssueNumbers } from "./linked-issues.js";
 import { testChangedPlatforms, verifiedLine, type Platform } from "./platforms.js";
-import { revise } from "./revision.js";
 
 export interface Issue {
   readonly number: number;
@@ -37,7 +38,16 @@ export interface PullRequest {
   readonly branch: string;
   readonly title: string;
   readonly body: string;
-  readonly label: string;
+}
+
+export interface OpenFinding {
+  readonly text: string;
+  readonly at?: { readonly path: string; readonly line?: number };
+}
+
+export interface PullRequestReview {
+  readonly body: string;
+  readonly comments: readonly { readonly path: string; readonly line: number; readonly body: string }[];
 }
 
 export interface Relabel {
@@ -45,37 +55,14 @@ export interface Relabel {
   readonly add?: string;
 }
 
-export interface RevisionPullRequest {
-  readonly number: number;
-  readonly branch: string;
-  readonly issue: Issue;
-  readonly revision: number;
-}
-
-export interface CommentLine {
-  readonly author: string;
-  readonly body: string;
-}
-
-export type ReviewComment = CommentLine & { readonly replies: readonly CommentLine[] } & (
-    | { readonly kind: "inline"; readonly thread: string; readonly path: string; readonly line?: number; readonly diffHunk: string }
-    | { readonly kind: "conversation" }
-  );
-
-export type NumberedComment = ReviewComment & { readonly id: string };
-
 export interface Tracker {
   backlog(): Promise<Backlog>;
-  revisionPullRequests(): Promise<RevisionPullRequest[]>;
   linkedIssues(numbers: readonly number[]): Promise<LinkedIssue[]>;
-  reviewComments(pullRequest: number): Promise<ReviewComment[]>;
-  replyInThread(thread: string, body: string): Promise<void>;
-  resolveThread(thread: string): Promise<void>;
   pushBranch(branch: string): Promise<void>;
   openPullRequest(pullRequest: PullRequest): Promise<string>;
-  mergePullRequest(pullRequest: string, closes: number): Promise<"merged" | "conflict">;
-  comment(issueOrPullRequest: number, body: string): Promise<void>;
-  relabel(issueOrPullRequest: number, relabel: Relabel): Promise<void>;
+  postReview(pullRequest: string, review: PullRequestReview): Promise<void>;
+  comment(issueNumber: number, body: string): Promise<void>;
+  relabel(issueNumber: number, relabel: Relabel): Promise<void>;
 }
 
 export interface LocalBranch {
@@ -104,37 +91,47 @@ export interface Session {
 }
 
 export interface IssueSession extends Session {
-  implement(feedback?: string): Promise<void>;
-  review(feedback?: string): Promise<Review>;
-  draft(testRun: string): Promise<string | undefined>;
+  implement(feedback?: string, fixableFindings?: string): Promise<ImplementerRun>;
+  review(): Promise<FirstReview>;
+  wrapUp(fixRound: FixRound): Promise<WrapUp>;
+  putBack(head: string): Promise<void>;
+}
+
+export interface ImplementerRun {
+  readonly reply: string;
+  readonly log: string;
+  readonly findingsLeft?: string;
 }
 
 export interface Review {
   readonly log: string;
-  readonly openFindings: boolean;
-  readonly unfixedFindings?: string;
+  readonly openFindings: readonly OpenFinding[];
+  readonly pullRequestDraft?: string;
 }
 
-export interface RevisionRun {
-  readonly output: string;
+export interface FirstReview extends Review {
+  readonly fixableFindings?: string;
+  readonly unreadable?: true;
+}
+
+export interface WrapUp {
   readonly log: string;
+  readonly openFindings?: readonly OpenFinding[];
+  readonly pullRequestDraft?: string;
 }
 
-export interface RevisionSession extends Session {
-  revise(feedback?: string): Promise<RevisionRun>;
-  discard(): Promise<void>;
+export interface FixRound {
+  readonly fixableFindings: string;
+  readonly openFindings: readonly OpenFinding[];
+  readonly reviewedHead: string;
+  readonly findingsLeft?: string;
+  readonly failed?: true;
 }
-
-export type RevisionStart =
-  | { readonly kind: "session"; readonly session: RevisionSession }
-  | { readonly kind: "hand-work" }
-  | { readonly kind: "merge-conflict"; readonly files: string[] };
 
 export interface Agents {
   localBranches(issueNumber: number): Promise<LocalBranch[]>;
   discardLeftover(branch: string): Promise<void>;
   start(issue: Issue, branch: string): Promise<IssueSession>;
-  startRevision(pullRequest: RevisionPullRequest, comments: readonly NumberedComment[]): Promise<RevisionStart>;
 }
 
 export interface TestRunner {
@@ -146,10 +143,9 @@ export type HandoffOutcome = {
   readonly issue: number;
   readonly kind: "handoff";
   readonly branch: string;
-  readonly pullRequest?: string;
 } & (
-  | { readonly reason: "attempt-budget"; readonly lastGreenHead?: string; readonly hasCommits: boolean; readonly log: string; readonly rawLog?: string }
-  | { readonly reason: "merge-conflict"; readonly baseBranch: string }
+  | { readonly reason: "attempt-budget"; readonly log: string; readonly rawLog?: string }
+  | { readonly reason: "no-commits"; readonly lastReply: string; readonly implementerLog: string }
 );
 
 export interface ReviewedOutcome {
@@ -158,28 +154,14 @@ export interface ReviewedOutcome {
   readonly branch: string;
   readonly reviewLogs: string[];
   readonly platforms: readonly Platform[];
-  readonly openFindings: boolean;
-  readonly unfixedFindings?: string;
+  readonly openFindings: readonly OpenFinding[];
   readonly pullRequestDraft?: string;
+  readonly fixRoundFailed?: true;
 }
-
-export type RevisionHandoffOutcome = {
-  readonly issue: number;
-  readonly kind: "revision-handoff";
-  readonly pullRequest: number;
-} & (
-  | { readonly reason: "merge-conflict"; readonly baseBranch: string; readonly files: string[] }
-  | { readonly reason: "attempt-budget"; readonly log: string; readonly rawLog?: string }
-);
 
 export type Outcome =
   | ReviewedOutcome
-  | { readonly issue: number; readonly kind: "merged"; readonly branch: string; readonly pullRequest: string }
-  | { readonly issue: number; readonly kind: "no-commits" }
   | HandoffOutcome
-  | { readonly issue: number; readonly kind: "revised"; readonly pullRequest: number; readonly pushed: boolean; readonly log: string }
-  | { readonly issue: number; readonly kind: "no-review-comments"; readonly pullRequest: number }
-  | RevisionHandoffOutcome
   | { readonly issue: number; readonly kind: "local-branch"; readonly branch: string }
   | { readonly issue: number; readonly kind: "error"; readonly message: string };
 
@@ -188,42 +170,34 @@ export interface AfkLoopOptions {
   readonly agents: Agents;
   readonly testRunner: TestRunner;
   readonly cap?: number;
-  readonly autoMerge?: boolean;
-  readonly baseBranch: string;
   readonly platforms: readonly Platform[];
 }
 
 export const defaultCap = 5;
 const priorities = ["priority:p0", "priority:p1", "priority:p2"];
-const draftRuns = 2;
 const implementedBy = "Implemented by the AFK loop's Implementer in the Sandbox.";
-const reviewedBy = "Reviewed by the AFK loop's Reviewer in the Sandbox; its fixes, if any, are on the branch.";
-const allFixed = "It left no finding unfixed.";
-const leftUnfixed = "It left these findings unfixed:";
+const reviewedBy = "Reviewed by the AFK loop's Reviewer in the Sandbox.";
+const fixesNotIncluded = "The Fix round failed its Test run, so its fixes are not included: the Reviewer's Fixable findings are among the Open findings.";
+const noneFixed = "The Fix round failed, so none of these Fixable findings is fixed:";
+const unreadableReview = "The Reviewer's reply gives no <fixable-findings> block and <open-findings> block the Host can read, so its findings are unknown.";
+const unchecked = "The Wrap-up gave no Open findings the Host can read, so whether these Fixable findings are fixed is unchecked:";
+const reviewerSays = `${loopMarker}\n**The AFK loop's Reviewer:**`;
 
 export function issueBranchPrefix(issueNumber: number): string {
   return `issue/${issueNumber}-`;
 }
 
-export function issueNumberOf(branch: string): number | undefined {
-  const issueNumber = branch.match(/^issue\/(\d+)-/)?.[1];
-  return issueNumber ? Number(issueNumber) : undefined;
-}
-
 export async function runAfkLoop(loop: AfkLoopOptions): Promise<Outcome[]> {
   const cap = loop.cap ?? defaultCap;
   const outcomes: Outcome[] = [];
-  const worked = () => outcomes.filter((o) => o.kind !== "local-branch" && o.kind !== "no-review-comments").length;
-  const revised = new Set<number>();
+  const worked = () => outcomes.filter((o) => o.kind !== "local-branch").length;
   while (worked() < cap) {
-    const pullRequest = await nextRevisionPullRequest(loop.tracker, revised);
-    const issue = pullRequest?.issue ?? nextEligibleIssue(await loop.tracker.backlog(), outcomes);
+    const issue = nextEligibleIssue(await loop.tracker.backlog(), outcomes);
     if (!issue) break;
-    const working = withLinkedIssues(issue, loop.tracker).then((briefed) => (pullRequest ? revise({ ...pullRequest, issue: briefed }, loop) : work(briefed, loop)));
+    const working = withLinkedIssues(issue, loop.tracker).then((briefed) => work(briefed, loop));
     const outcome = await working.catch((error: unknown): Outcome => ({ issue: issue.number, kind: "error", message: String(error) }));
     outcomes.push(outcome);
-    const handedOff = outcome.kind === "handoff" || outcome.kind === "revision-handoff";
-    if (outcome.kind === "error" || (loop.autoMerge && handedOff)) break;
+    if (outcome.kind === "error") break;
   }
   return outcomes;
 }
@@ -231,13 +205,6 @@ export async function runAfkLoop(loop: AfkLoopOptions): Promise<Outcome[]> {
 async function withLinkedIssues(issue: Issue, tracker: Tracker): Promise<Issue> {
   const numbers = linkedIssueNumbers(issue);
   return numbers.length > 0 ? { ...issue, linkedIssues: await tracker.linkedIssues(numbers) } : issue;
-}
-
-async function nextRevisionPullRequest(tracker: Tracker, revised: Set<number>): Promise<RevisionPullRequest | undefined> {
-  const pullRequests = await tracker.revisionPullRequests();
-  const next = pullRequests.filter((pullRequest) => !revised.has(pullRequest.number)).sort((a, b) => a.number - b.number)[0];
-  if (next) revised.add(next.number);
-  return next;
 }
 
 function nextEligibleIssue(backlog: Backlog, outcomes: readonly Outcome[]): Issue | undefined {
@@ -263,110 +230,114 @@ async function work(issue: Issue, loop: AfkLoopOptions): Promise<Outcome> {
   for (const leftover of localBranches) await loop.agents.discardLeftover(leftover.name);
 
   const outcome = await runSession(issue, loop);
-  if (outcome.kind === "handoff" && outcome.reason === "attempt-budget") return handOff(issue, outcome, loop.tracker);
+  if (outcome.kind === "handoff") return handOff(issue, outcome, loop.tracker);
   if (outcome.kind !== "pull-request") return outcome;
   const pullRequest = await openPullRequest(issue, outcome, loop);
-  const green = outcome.platforms.length > 0 && !outcome.openFindings;
-  return loop.autoMerge && green ? merge(issue, outcome.branch, pullRequest, loop) : outcome;
-}
-
-async function merge(issue: Issue, branch: string, pullRequest: string, { tracker, baseBranch }: AfkLoopOptions): Promise<Outcome> {
-  if ((await tracker.mergePullRequest(pullRequest, issue.number)) === "merged") return { issue: issue.number, kind: "merged", branch, pullRequest };
-  return handOff(issue, { issue: issue.number, kind: "handoff", branch, pullRequest, reason: "merge-conflict", baseBranch }, tracker);
+  await postOpenFindings(pullRequest, outcome.openFindings, loop.tracker);
+  return outcome;
 }
 
 async function runSession(issue: Issue, loop: AfkLoopOptions): Promise<Outcome> {
   const branch = branchName(issue);
   const session = await loop.agents.start(issue, branch);
   try {
-    const outcome = await spendAttempts(issue, branch, session, loop.testRunner);
-    if (outcome.kind !== "pull-request") return outcome;
-    const pullRequestDraft = await draftPullRequest(session, verifiedLine(loop.platforms, outcome.platforms));
-    return pullRequestDraft ? { ...outcome, pullRequestDraft } : outcome;
+    return await spendAttempts(issue, branch, session, loop.testRunner);
   } finally {
     await session.close();
   }
-}
-
-async function draftPullRequest(session: IssueSession, verified: string): Promise<string | undefined> {
-  for (let run = 0; run < draftRuns; run += 1) {
-    const draft = await session.draft(verified).catch(() => undefined);
-    if (draft) return draft;
-  }
-  return undefined;
 }
 
 async function spendAttempts(issue: Issue, branch: string, session: IssueSession, testRunner: TestRunner): Promise<Outcome> {
   let lastFailure: { head: string; log: string } | undefined;
   let feedback: string | undefined;
   let worktree: WorktreeState | undefined;
-  let lastGreenHead: string | undefined;
+  let fixRound: FixRound | undefined;
+  let reviewedPlatforms: readonly Platform[] = [];
   let failures = 0;
   const reviewLogs: string[] = [];
-  let openFindings = false;
-  let unfixedFindings: string | undefined;
   const fail = (nextFeedback: string) => {
     feedback = nextFeedback;
     failures += 1;
   };
+  const reviewerRun = async <R extends { readonly log: string }>(run: Promise<R>, head: string): Promise<R> => {
+    const review = await run;
+    await session.putBack(head);
+    reviewLogs.push(review.log);
+    return review;
+  };
+  const pullRequest = ({ openFindings, pullRequestDraft }: Review, platforms: readonly Platform[], fixRoundFailed?: true): Outcome => ({
+    issue: issue.number,
+    kind: "pull-request",
+    branch,
+    reviewLogs,
+    platforms,
+    openFindings,
+    ...(pullRequestDraft ? { pullRequestDraft } : {}),
+    ...(fixRoundFailed ? { fixRoundFailed } : {}),
+  });
+  const wrapUp = async (round: FixRound, head: string, platforms: readonly Platform[]): Promise<Outcome> => {
+    const review = await reviewerRun(session.wrapUp(round), head);
+    return pullRequest({ ...review, openFindings: finalOpenFindings(round, review.openFindings) }, platforms, round.failed);
+  };
   while (failures < attemptBudget) {
-    if (lastGreenHead) {
-      const review = await session.review(feedback);
-      reviewLogs.push(review.log);
-      if (!feedback) ({ openFindings, unfixedFindings } = review);
-    } else await session.implement(feedback);
-
+    const run = await session.implement(feedback, fixRound?.fixableFindings);
     worktree = await session.inspect();
+    if (!fixRound && !worktree.dirty && worktree.commitsAhead === 0) {
+      return { issue: issue.number, kind: "handoff", branch, reason: "no-commits", lastReply: run.reply, implementerLog: run.log };
+    }
+    if (fixRound && run.findingsLeft) fixRound = { ...fixRound, findingsLeft: run.findingsLeft };
     if (worktree.dirty) {
       fail(dirtyFeedback);
       continue;
     }
-    if (worktree.commitsAhead === 0) {
-      if (!lastGreenHead) return { issue: issue.number, kind: "no-commits" };
-      fail(lostCommitsFeedback(lastGreenHead));
-      continue;
-    }
-    const reviewed: Outcome = { issue: issue.number, kind: "pull-request", branch, reviewLogs, platforms: worktree.platforms, openFindings, ...(unfixedFindings ? { unfixedFindings } : {}) };
-    if (worktree.head === lastGreenHead) return reviewed;
-    if (worktree.head === lastFailure?.head) {
-      fail(`${unchangedHeadFeedback}\n\n${lastFailure.log}`);
-      continue;
+    if (worktree.head !== fixRound?.reviewedHead) {
+      if (worktree.head === lastFailure?.head) {
+        fail(`${unchangedHeadFeedback}\n\n${lastFailure.log}`);
+        continue;
+      }
+      const testRun = await testChangedPlatforms(testRunner, session.exec, branch, worktree.platforms);
+      if (!testRun.passed) {
+        lastFailure = { head: worktree.head, log: testRun.log };
+        fail(testRun.log);
+        continue;
+      }
     }
 
-    const testRun = await testChangedPlatforms(testRunner, session.exec, branch, worktree.platforms);
-    if (!testRun.passed) {
-      lastFailure = { head: worktree.head, log: testRun.log };
-      fail(testRun.log);
-      continue;
-    }
-    if (lastGreenHead) return reviewed;
-    lastGreenHead = worktree.head;
+    if (fixRound) return wrapUp(fixRound, worktree.head, worktree.platforms);
+    const review = await reviewerRun(session.review(), worktree.head);
+    if (review.unreadable) throw new Error(`${unreadableReview} Its log: ${review.log}`);
+    if (!review.fixableFindings) return pullRequest(review, worktree.platforms);
+    fixRound = { fixableFindings: review.fixableFindings, openFindings: review.openFindings, reviewedHead: worktree.head };
+    reviewedPlatforms = worktree.platforms;
     lastFailure = undefined;
     feedback = undefined;
   }
+  if (fixRound) {
+    await session.putBack(fixRound.reviewedHead);
+    return wrapUp({ ...fixRound, failed: true }, fixRound.reviewedHead, reviewedPlatforms);
+  }
   const log = worktree?.dirty && lastFailure ? `${dirtyFeedback}\n\nThe Test run before it reported:\n\n${lastFailure.log}` : (feedback ?? "");
-  const hasCommits = (worktree?.commitsAhead ?? 0) > 0;
   return {
     issue: issue.number,
     kind: "handoff",
     branch,
     reason: "attempt-budget",
-    hasCommits,
     log,
     ...(lastFailure ? { rawLog: testRunner.rawLogPath(branch) } : {}),
-    ...(lastGreenHead ? { lastGreenHead } : {}),
   };
 }
 
-function lostCommitsFeedback(lastGreenHead: string): string {
-  return `Your last run removed the branch's commits. Restore them: the last commit that passed the Test run is ${lastGreenHead}.`;
+function finalOpenFindings({ fixableFindings, openFindings, failed }: FixRound, wrapUp?: readonly OpenFinding[]): readonly OpenFinding[] {
+  if (!failed) return wrapUp ?? [...openFindings, { text: `${unchecked}\n\n${fixableFindings}` }];
+  if (wrapUp && wrapUp.length > openFindings.length) return wrapUp;
+  return [...(wrapUp?.length === openFindings.length ? wrapUp : openFindings), { text: `${noneFixed}\n\n${fixableFindings}` }];
 }
 
 function withoutClosingKeywords(draft: string): string {
   return draft.replace(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(:?\s+(?:[\w.-]+\/[\w.-]+)?#\d+)/gi, "Refs$1");
 }
 
-async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, unfixedFindings, pullRequestDraft }: ReviewedOutcome, loop: AfkLoopOptions): Promise<string> {
+async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, openFindings, pullRequestDraft, fixRoundFailed }: ReviewedOutcome, loop: AfkLoopOptions): Promise<string> {
   await loop.tracker.pushBranch(branch);
   const pullRequest = await loop.tracker.openPullRequest({
     branch,
@@ -375,75 +346,64 @@ async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, un
       `Closes #${issue.number}.`,
       ...(pullRequestDraft ? [withoutClosingKeywords(pullRequestDraft)] : []),
       implementedBy,
-      `${reviewedBy} Its logs on the Host: ${reviewLogs.map((log) => `\`${log}\``).join(", ")}. ${unfixedFindings ? leftUnfixed : allFixed}`,
-      ...(unfixedFindings ? [unfixedFindings] : []),
+      `${reviewedBy} Its logs on the Host: ${reviewLogs.map((log) => `\`${log}\``).join(", ")}. ${openFindingsPosted(openFindings.length)}`,
+      ...(fixRoundFailed ? [fixesNotIncluded] : []),
       verifiedLine(loop.platforms, platforms),
     ].join("\n\n"),
-    label: readyForHuman,
   });
   await loop.tracker.relabel(issue.number, { remove: readyForAgent });
   return pullRequest;
 }
 
+function openFindingsPosted(count: number): string {
+  if (count === 0) return "It left no Open finding.";
+  return `It posted ${count} Open ${count === 1 ? "finding" : "findings"} as review comments on this PR.`;
+}
+
+async function postOpenFindings(pullRequest: string, findings: readonly OpenFinding[], tracker: Tracker): Promise<void> {
+  if (findings.length === 0) return;
+  try {
+    await tracker.postReview(pullRequest, reviewOf(findings, "inline"));
+  } catch {
+    await tracker.postReview(pullRequest, reviewOf(findings, "body"));
+  }
+}
+
+function reviewOf(findings: readonly OpenFinding[], placed: "inline" | "body"): PullRequestReview {
+  const comments = findings.flatMap(({ at, text }) => (placed === "inline" && at?.line ? [{ path: at.path, line: at.line, body: `${reviewerSays}\n\n${text}` }] : []));
+  const inBody = placed === "inline" ? findings.filter(({ at }) => !at?.line) : findings;
+  return { body: inBody.length > 0 ? [reviewerSays, inBody.map(bullet).join("\n")].join("\n\n") : "", comments };
+}
+
+function bullet({ at, text }: OpenFinding): string {
+  const where = at ? `\`${at.line ? `${at.path}:${at.line}` : at.path}\`: ` : "";
+  return `- ${where}${text.replaceAll("\n", "\n  ")}`;
+}
+
 async function handOff(issue: Issue, handoff: HandoffOutcome, tracker: Tracker): Promise<HandoffOutcome> {
   await tracker.relabel(issue.number, { remove: readyForAgent, add: readyForHuman });
   const { branch } = handoff;
-  const { why, details, keptLocal } = describeHandoff(handoff);
-  const headline = `Handed off to a human: ${why}.`;
-  if (handoff.reason === "merge-conflict") {
-    await tracker.comment(issue.number, [headline, `PR: ${handoff.pullRequest}`].join("\n\n"));
-    return handoff;
+  const { why, details } = describeHandoff(handoff);
+  await tracker.comment(
+    issue.number,
+    [
+      `Handed off to a human: ${why}.`,
+      details,
+      `Nothing is pushed. What the session left, if anything, is on the Host: on the local branch \`${branch}\`, or uncommitted in its worktree.`,
+      `To requeue for the loop: remove the local \`${branch}\` branch and its worktree, if they are still there, then relabel the issue \`${readyForAgent}\`.`,
+    ].join("\n\n"),
+  );
+  return handoff;
+}
+
+export function describeHandoff(handoff: HandoffOutcome): { why: string; details: string } {
+  if (handoff.reason === "no-commits") {
+    return {
+      why: "the Implementer made no commits",
+      details: `The Implementer's last reply (its log on the Host: \`${handoff.implementerLog}\`):\n\n${fenced(handoff.lastReply)}`,
+    };
   }
-  let pushed = false;
-  let pullRequest: string | undefined;
-  if (!keptLocal) {
-    try {
-      await tracker.pushBranch(branch);
-      pushed = true;
-      pullRequest = await tracker.openPullRequest({
-        branch,
-        title: `[#${issue.number}] - Handoff: ${summary(issue)}`,
-        body: [`Refs #${issue.number}.`, headline, implementedBy, details, requeueSteps(branch, true, true)].join("\n\n"),
-        label: readyForHuman,
-      });
-    } catch {
-      // the adapter's stderr already reports it
-    }
-  }
-  const where = pullRequest
-    ? [`PR: ${pullRequest}`]
-    : [keptLocal ?? (pushed ? `\`${branch}\` is pushed; opening its PR failed.` : `Pushing \`${branch}\` failed; it stays local.`), details];
-  await tracker.comment(issue.number, [headline, ...where, requeueSteps(branch, pushed, !!pullRequest)].join("\n\n"));
-  return pullRequest ? { ...handoff, pullRequest } : handoff;
-}
-
-export function describeHandoff(handoff: HandoffOutcome): { why: string; details?: string; keptLocal?: string } {
-  if (handoff.reason === "merge-conflict") return { why: `the PR is green but no longer merges cleanly into \`${handoff.baseBranch}\`, so it wasn't merged` };
-  const { branch } = handoff;
-  const why = handoff.lastGreenHead
-    ? `the Attempt budget (${attemptBudget}) ran out in review, after the Implementer's green Test run (last green at \`${handoff.lastGreenHead}\`)`
-    : budgetSpentWhy;
-  return {
-    why,
-    details: lastAttemptDetails(handoff.log, handoff.rawLog),
-    ...(handoff.hasCommits ? {} : { keptLocal: noCommitsNote(branch, handoff.lastGreenHead) }),
-  };
-}
-
-function noCommitsNote(branch: string, lastGreenHead?: string): string {
-  return lastGreenHead
-    ? `\`${branch}\` lost its commits in review; \`${lastGreenHead}\` is still in the local repository.`
-    : `\`${branch}\` has only uncommitted work, in its local worktree (\`git worktree list\`).`;
-}
-
-function requeueSteps(branch: string, pushed: boolean, hasPullRequest: boolean): string {
-  const steps = [
-    ...(hasPullRequest ? ["close the PR"] : []),
-    ...(pushed ? [`delete \`${branch}\` on GitHub`] : []),
-    `remove the local \`${branch}\` branch and its worktree`,
-    `relabel the issue \`${readyForAgent}\``,
-  ];
-  return `To requeue for the loop: ${steps.join(", ")}.`;
+  return { why: budgetSpentWhy, details: lastAttemptDetails(handoff.log, handoff.rawLog) };
 }
 
 function summary(issue: Issue): string {
