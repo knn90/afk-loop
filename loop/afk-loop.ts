@@ -375,7 +375,7 @@ async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, un
       `Closes #${issue.number}.`,
       ...(pullRequestDraft ? [withoutClosingKeywords(pullRequestDraft)] : []),
       implementedBy,
-      `${reviewedBy} ${unfixedFindings ? leftUnfixed : allFixed} Its logs on the Host: ${reviewLogs.map((log) => `\`${log}\``).join(", ")}.`,
+      `${reviewedBy} Its logs on the Host: ${reviewLogs.map((log) => `\`${log}\``).join(", ")}. ${unfixedFindings ? leftUnfixed : allFixed}`,
       ...(unfixedFindings ? [unfixedFindings] : []),
       verifiedLine(loop.platforms, platforms),
     ].join("\n\n"),
