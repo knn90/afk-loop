@@ -496,6 +496,7 @@ describe("runAfkLoop, Fix round", () => {
   const branch = "issue/1-issue-1";
   const reviewerSays = "<!-- afk-loop -->\n**The AFK loop's Reviewer:**";
   const unfixed = `The Fix round failed, so none of these Fixable findings is fixed:\n  \n  ${fixable}`;
+  const unchecked = "The Wrap-up gave no Open findings the Host can read, so whether these Fixable findings are fixed is unchecked:";
   const agentRuns = (calls: string[]) => calls.filter((call) => ["implement", "review", "wrap up"].includes(call));
 
   test("no Fixable finding: one Reviewer run, whose draft is the PR body, and no Fix round or wrap-up", async () => {
@@ -760,7 +761,7 @@ describe("runAfkLoop, Fix round", () => {
     assert.match(tracker.pullRequests[0]?.body ?? "", /Its logs on the Host: `logs\/review-1`, `logs\/review-2`\. It posted 1 Open finding /);
   });
 
-  test("a wrap-up that gives no Open findings block: the Host posts run 1's Open findings, and the PR body counts them", async () => {
+  test("a wrap-up that gives no Open findings block: the Host posts run 1's Open findings and the Fixable findings as unchecked, and the PR body counts them", async () => {
     const { sut, tracker } = makeSUT({
       issues: [issue(1)],
       runs: { 1: [{}, { fixableFindings: fixable, openFindings: [onLine, noLine] }, {}, { noOpenFindingsBlock: true }] },
@@ -768,9 +769,9 @@ describe("runAfkLoop, Fix round", () => {
 
     const outcomes = await sut.run();
 
-    assert.deepEqual(outcomes.map((outcome) => outcome.kind === "pull-request" && outcome.openFindings), [[onLine, noLine]]);
-    assert.deepEqual(tracker.reviews.map((review) => [review.body, review.comments.length]), [[`${reviewerSays}\n\n- No test covers a skipped day.`, 1]]);
-    assert.match(tracker.pullRequests[0]?.body ?? "", /It posted 2 Open findings as review comments on this PR\./);
+    assert.deepEqual(outcomes.map((outcome) => outcome.kind === "pull-request" && outcome.openFindings), [[onLine, noLine, { text: `${unchecked}\n\n${fixable}` }]]);
+    assert.deepEqual(tracker.reviews.map((review) => [review.body, review.comments.length]), [[`${reviewerSays}\n\n- No test covers a skipped day.\n- ${unchecked}\n  \n  ${fixable}`, 1]]);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /It posted 3 Open findings as review comments on this PR\./);
   });
 
   test("a wrap-up that gives no Open findings block after a failed Fix round: the Host also posts the Fixable findings, as one finding in the review's body", async () => {
@@ -786,7 +787,7 @@ describe("runAfkLoop, Fix round", () => {
     assert.match(tracker.pullRequests[0]?.body ?? "", /It posted 2 Open findings as review comments on this PR\./);
   });
 
-  test("a wrap-up that gives an empty Open findings block after a failed Fix round: the Host posts the Fixable findings all the same", async () => {
+  test("a wrap-up that gives an empty Open findings block after a failed Fix round: the Host posts run 1's Open findings and the Fixable findings all the same", async () => {
     const { sut, tracker } = makeSUT({
       issues: [issue(1)],
       runs: { 1: [{}, { fixableFindings: fixable, openFindings: [onLine] }, {}, {}, {}, { openFindings: [] }] },
@@ -795,8 +796,21 @@ describe("runAfkLoop, Fix round", () => {
 
     await sut.run();
 
-    assert.deepEqual(tracker.reviews, [{ body: `${reviewerSays}\n\n- ${unfixed}`, comments: [] }]);
-    assert.match(tracker.pullRequests[0]?.body ?? "", /It posted 1 Open finding as review comments on this PR\./);
+    assert.deepEqual(tracker.reviews.map((review) => [review.body, review.comments.length]), [[`${reviewerSays}\n\n- ${unfixed}`, 1]]);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /It posted 2 Open findings as review comments on this PR\./);
+  });
+
+  test("a wrap-up after a failed Fix round that gives no more findings than run 1's Open findings: the Host adds the Fixable findings", async () => {
+    const restated: OpenFinding = { text: "The streak still resets at UTC midnight.", at: { path: "web/src/streak.ts", line: 12 } };
+    const { sut } = makeSUT({
+      issues: [issue(1)],
+      runs: { 1: [{}, { fixableFindings: fixable, openFindings: [onLine] }, {}, {}, {}, { openFindings: [restated] }] },
+      testRunResults: [green, "error: fix", "error: fix", "error: fix"],
+    });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes.map((outcome) => outcome.kind === "pull-request" && outcome.openFindings), [[restated, { text: `The Fix round failed, so none of these Fixable findings is fixed:\n\n${fixable}` }]]);
   });
 
   test("a wrap-up that gives an empty Open findings block after a green Fix round has no Open finding", async () => {

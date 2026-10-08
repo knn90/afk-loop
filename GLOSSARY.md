@@ -26,14 +26,14 @@ The Sandbox agent that reviews the Implementer's green branch against the issue 
 A finding the Reviewer is sure is valid, and that the Implementer can fix inside this diff with no decision from the maintainer.
 
 **Open finding**:
-A finding the maintainer must decide. Any finding the Reviewer doubts is one, and so are a Fixable finding left unfixed, a finding in the Fix round's commits and a real problem outside the issue's work. A point the issue itself settles is not a finding.
+A finding the maintainer must decide, posted on the PR as a review comment. Any finding the Reviewer doubts is one, and so are a Fixable finding left unfixed, a finding in the Fix round's commits and a real problem outside the issue's work. A point the issue itself settles is not a finding.
 _Avoid_: declined finding
 
 **Fix round**:
 The Implementer's one round on the Reviewer's Fixable findings, after its branch is green. Its work up to that green branch is its first round.
 
 **Wrap-up**:
-The Reviewer's second run, after a Fix round: it reviews the Fix round's commits and gives the final Open findings.
+The Reviewer's second run, after a Fix round: it reviews the Fix round's commits, checks each Fixable finding, gives the final Open findings and drafts the PR body.
 _Avoid_: second review, re-review
 
 **Platform**:

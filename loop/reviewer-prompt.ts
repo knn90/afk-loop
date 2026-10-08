@@ -56,7 +56,8 @@ const openFindingsFormat = `one each, as \`<finding path="path/to/file" line="12
 
 function draftRules(issue: Issue): string {
   return `  - The draft starts at \`## Summary\` and names other issues as \`Refs #n\`. The Host puts \`Closes #${issue.number}.\` above it and its own lines below it.
-  - Evidence: quote only output of commands you run in this Sandbox. The Host adds what the Test run verified.`;
+  - Evidence: quote only output of commands you run in this Sandbox. The Host adds what the Test run verified.
+  - The draft describes the change. Open findings go in the <open-findings> block alone.`;
 }
 
 function standardsBlock(project: Project, standards: readonly string[]): string {
@@ -118,7 +119,7 @@ export function wrapUpPrompt({ project, issue, branch, base, standards, fixRound
   - Fixed point: \`${reviewedHead}\`, so the diff is \`git diff ${reviewedHead}...HEAD\`.
   - Spec: your Fixable findings and the <issue> block.
   - Standards: the <coding-standards> block.
-- Every finding in the Fix round's commits is an Open finding, whatever its kind: this was the one Fix round.
+- Every finding in the Fix round's commits is an Open finding, whatever its kind: this was the one Fix round. A point the <issue>'s own text settles is not a finding: leave it out.
 - Check each Fixable finding against the branch diff. One that was not fixed becomes an Open finding, ${leftReason}.
 - Restate each of your Open findings against the branch diff: its text as it holds now, its \`path\` and \`line\` as HEAD has them.`;
   const finalOpenFindings = failed ? "yours and every Fixable finding" : "yours restated, each Fixable finding not fixed and each finding in the Fix round's commits";

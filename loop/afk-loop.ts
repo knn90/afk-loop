@@ -180,6 +180,7 @@ const reviewedBy = "Reviewed by the AFK loop's Reviewer in the Sandbox.";
 const fixesNotIncluded = "The Fix round failed its Test run, so its fixes are not included: the Reviewer's Fixable findings are among the Open findings.";
 const noneFixed = "The Fix round failed, so none of these Fixable findings is fixed:";
 const unreadableReview = "The Reviewer's reply gives no <fixable-findings> block and <open-findings> block the Host can read, so its findings are unknown.";
+const unchecked = "The Wrap-up gave no Open findings the Host can read, so whether these Fixable findings are fixed is unchecked:";
 const reviewerSays = `${loopMarker}\n**The AFK loop's Reviewer:**`;
 
 export function issueBranchPrefix(issueNumber: number): string {
@@ -327,9 +328,9 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
 }
 
 function finalOpenFindings({ fixableFindings, openFindings, failed }: FixRound, wrapUp?: readonly OpenFinding[]): readonly OpenFinding[] {
-  const findings = wrapUp ?? openFindings;
-  const fixableLost = failed && (!wrapUp || wrapUp.length === 0);
-  return fixableLost ? [...findings, { text: `${noneFixed}\n\n${fixableFindings}` }] : findings;
+  if (!failed) return wrapUp ?? [...openFindings, { text: `${unchecked}\n\n${fixableFindings}` }];
+  if (wrapUp && wrapUp.length > openFindings.length) return wrapUp;
+  return [...(wrapUp?.length === openFindings.length ? wrapUp : openFindings), { text: `${noneFixed}\n\n${fixableFindings}` }];
 }
 
 function withoutClosingKeywords(draft: string): string {

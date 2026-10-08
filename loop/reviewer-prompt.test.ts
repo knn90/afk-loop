@@ -170,6 +170,12 @@ describe("reviewerPrompt, PR body", () => {
 
     assert.match(prompt, /Evidence: quote only output of commands you run in this Sandbox\. The Host adds what the Test run verified\./);
   });
+
+  test("Open findings stay in their block, out of the draft", () => {
+    const sut = makeSUT();
+
+    for (const prompt of [sut.prompt(), sut.wrapUp()]) assert.ok(prompt.includes("  - The draft describes the change. Open findings go in the <open-findings> block alone."));
+  });
 });
 
 describe("wrapUpPrompt", () => {
@@ -226,7 +232,7 @@ describe("wrapUpPrompt", () => {
 
     const prompt = sut.wrapUp();
 
-    assert.ok(prompt.includes("- Every finding in the Fix round's commits is an Open finding, whatever its kind: this was the one Fix round."));
+    assert.ok(prompt.includes("- Every finding in the Fix round's commits is an Open finding, whatever its kind: this was the one Fix round. A point the <issue>'s own text settles is not a finding: leave it out."));
   });
 
   test("carries the findings the Implementer left, and puts its reason on each one left unfixed", () => {
