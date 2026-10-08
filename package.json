@@ -1,0 +1,25 @@
+{
+  "name": "afk-loop",
+  "license": "MIT",
+  "repository": "github:knn90/afk-loop",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "afk-loop": "bin/afk-loop.js"
+  },
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test loop/*.test.ts"
+  },
+  "dependencies": {
+    "@ai-hero/sandcastle": "0.12.0",
+    "tsx": "^4"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5"
+  }
+}
