@@ -4,7 +4,6 @@ import type { Issue } from "./afk-loop.js";
 import { implementerPrompt } from "./implementer-prompt.js";
 import type { Platform } from "./platforms.js";
 import { reviewerPrompt } from "./reviewer-prompt.js";
-import { revisionPrompt } from "./revision-prompt.js";
 import { requiredSkills, skill } from "./skills-plugin.js";
 
 describe("the skills the prompts name", () => {
@@ -34,6 +33,5 @@ function everyPrompt(): string[] {
     implementerPrompt(project, issue, branch),
     reviewerPrompt({ project, issue, branch, base, standards: [] }),
     reviewerPrompt({ project, issue, branch, base, standards: [], feedback: "error: boom" }),
-    revisionPrompt({ project, issue, pullRequest: 21, branch, base, comments: [{ id: "C1", kind: "conversation", author: "knn90", body: "Rename.", replies: [] }] }),
   ];
 }

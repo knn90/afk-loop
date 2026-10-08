@@ -9,7 +9,6 @@ import {
 } from "./loop-rules.js";
 import { linkedIssueNumbers } from "./linked-issues.js";
 import { testChangedPlatforms, verifiedLine, type Platform } from "./platforms.js";
-import { revise } from "./revision.js";
 
 export interface Issue {
   readonly number: number;
@@ -45,32 +44,9 @@ export interface Relabel {
   readonly add?: string;
 }
 
-export interface RevisionPullRequest {
-  readonly number: number;
-  readonly branch: string;
-  readonly issue: Issue;
-  readonly revision: number;
-}
-
-export interface CommentLine {
-  readonly author: string;
-  readonly body: string;
-}
-
-export type ReviewComment = CommentLine & { readonly replies: readonly CommentLine[] } & (
-    | { readonly kind: "inline"; readonly thread: string; readonly path: string; readonly line?: number; readonly diffHunk: string }
-    | { readonly kind: "conversation" }
-  );
-
-export type NumberedComment = ReviewComment & { readonly id: string };
-
 export interface Tracker {
   backlog(): Promise<Backlog>;
-  revisionPullRequests(): Promise<RevisionPullRequest[]>;
   linkedIssues(numbers: readonly number[]): Promise<LinkedIssue[]>;
-  reviewComments(pullRequest: number): Promise<ReviewComment[]>;
-  replyInThread(thread: string, body: string): Promise<void>;
-  resolveThread(thread: string): Promise<void>;
   pushBranch(branch: string): Promise<void>;
   openPullRequest(pullRequest: PullRequest): Promise<string>;
   comment(issueOrPullRequest: number, body: string): Promise<void>;
@@ -114,26 +90,10 @@ export interface Review {
   readonly pullRequestDraft?: string;
 }
 
-export interface RevisionRun {
-  readonly output: string;
-  readonly log: string;
-}
-
-export interface RevisionSession extends Session {
-  revise(feedback?: string): Promise<RevisionRun>;
-  discard(): Promise<void>;
-}
-
-export type RevisionStart =
-  | { readonly kind: "session"; readonly session: RevisionSession }
-  | { readonly kind: "hand-work" }
-  | { readonly kind: "merge-conflict"; readonly files: string[] };
-
 export interface Agents {
   localBranches(issueNumber: number): Promise<LocalBranch[]>;
   discardLeftover(branch: string): Promise<void>;
   start(issue: Issue, branch: string): Promise<IssueSession>;
-  startRevision(pullRequest: RevisionPullRequest, comments: readonly NumberedComment[]): Promise<RevisionStart>;
 }
 
 export interface TestRunner {
@@ -159,22 +119,10 @@ export interface ReviewedOutcome {
   readonly pullRequestDraft?: string;
 }
 
-export type RevisionHandoffOutcome = {
-  readonly issue: number;
-  readonly kind: "revision-handoff";
-  readonly pullRequest: number;
-} & (
-  | { readonly reason: "merge-conflict"; readonly baseBranch: string; readonly files: string[] }
-  | { readonly reason: "attempt-budget"; readonly log: string; readonly rawLog?: string }
-);
-
 export type Outcome =
   | ReviewedOutcome
   | { readonly issue: number; readonly kind: "no-commits" }
   | HandoffOutcome
-  | { readonly issue: number; readonly kind: "revised"; readonly pullRequest: number; readonly pushed: boolean; readonly log: string }
-  | { readonly issue: number; readonly kind: "no-review-comments"; readonly pullRequest: number }
-  | RevisionHandoffOutcome
   | { readonly issue: number; readonly kind: "local-branch"; readonly branch: string }
   | { readonly issue: number; readonly kind: "error"; readonly message: string };
 
@@ -183,7 +131,6 @@ export interface AfkLoopOptions {
   readonly agents: Agents;
   readonly testRunner: TestRunner;
   readonly cap?: number;
-  readonly baseBranch: string;
   readonly platforms: readonly Platform[];
 }
 
@@ -198,21 +145,14 @@ export function issueBranchPrefix(issueNumber: number): string {
   return `issue/${issueNumber}-`;
 }
 
-export function issueNumberOf(branch: string): number | undefined {
-  const issueNumber = branch.match(/^issue\/(\d+)-/)?.[1];
-  return issueNumber ? Number(issueNumber) : undefined;
-}
-
 export async function runAfkLoop(loop: AfkLoopOptions): Promise<Outcome[]> {
   const cap = loop.cap ?? defaultCap;
   const outcomes: Outcome[] = [];
-  const worked = () => outcomes.filter((o) => o.kind !== "local-branch" && o.kind !== "no-review-comments").length;
-  const revised = new Set<number>();
+  const worked = () => outcomes.filter((o) => o.kind !== "local-branch").length;
   while (worked() < cap) {
-    const pullRequest = await nextRevisionPullRequest(loop.tracker, revised);
-    const issue = pullRequest?.issue ?? nextEligibleIssue(await loop.tracker.backlog(), outcomes);
+    const issue = nextEligibleIssue(await loop.tracker.backlog(), outcomes);
     if (!issue) break;
-    const working = withLinkedIssues(issue, loop.tracker).then((briefed) => (pullRequest ? revise({ ...pullRequest, issue: briefed }, loop) : work(briefed, loop)));
+    const working = withLinkedIssues(issue, loop.tracker).then((briefed) => work(briefed, loop));
     const outcome = await working.catch((error: unknown): Outcome => ({ issue: issue.number, kind: "error", message: String(error) }));
     outcomes.push(outcome);
     if (outcome.kind === "error") break;
@@ -223,13 +163,6 @@ export async function runAfkLoop(loop: AfkLoopOptions): Promise<Outcome[]> {
 async function withLinkedIssues(issue: Issue, tracker: Tracker): Promise<Issue> {
   const numbers = linkedIssueNumbers(issue);
   return numbers.length > 0 ? { ...issue, linkedIssues: await tracker.linkedIssues(numbers) } : issue;
-}
-
-async function nextRevisionPullRequest(tracker: Tracker, revised: Set<number>): Promise<RevisionPullRequest | undefined> {
-  const pullRequests = await tracker.revisionPullRequests();
-  const next = pullRequests.filter((pullRequest) => !revised.has(pullRequest.number)).sort((a, b) => a.number - b.number)[0];
-  if (next) revised.add(next.number);
-  return next;
 }
 
 function nextEligibleIssue(backlog: Backlog, outcomes: readonly Outcome[]): Issue | undefined {

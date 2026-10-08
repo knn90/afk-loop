@@ -70,7 +70,7 @@ Passes when the Host reads an issue with `GH_TOKEN`, the Sandbox has no GitHub t
 npx --prefix .sandcastle afk-loop run [--cap 5]
 ```
 
-Works Revision PRs, then Eligible issues, one at a time, up to the cap. It never merges a PR: merging is the maintainer's, so an issue with an open blocker is worked in a later run, once the blocker's PR is merged. A run stops early only on an error. An Eligible issue: a fresh Sandbox (a Tart VM cloned from `<name>-base`, holding a copy of the repo), an Opus Implementer in it on `issue/<n>-<slug>`, then a Test run the loop executes in the same Sandbox. Failures go back to the Implementer. Once green, an Opus Reviewer in the same Sandbox runs the code-review skill against the issue and the coding standards (as on the base branch), then reviews its design with the codebase-design skill, commits its fixes, and the loop re-tests; failures go back to the Reviewer, which then fixes only those. Both agents share the Attempt budget. The reviewed, green branch is pushed as a `ready-for-human` PR listing the findings the Reviewer left unfixed, each with its reason.
+Works Eligible issues, one at a time, up to the cap. It never merges a PR: merging is the maintainer's, so an issue with an open blocker is worked in a later run, once the blocker's PR is merged. A run stops early only on an error. An Eligible issue: a fresh Sandbox (a Tart VM cloned from `<name>-base`, holding a copy of the repo), an Opus Implementer in it on `issue/<n>-<slug>`, then a Test run the loop executes in the same Sandbox. Failures go back to the Implementer. Once green, an Opus Reviewer in the same Sandbox runs the code-review skill against the issue and the coding standards (as on the base branch), then reviews its design with the codebase-design skill, commits its fixes, and the loop re-tests; failures go back to the Reviewer, which then fixes only those. Both agents share the Attempt budget. The reviewed, green branch is pushed as a `ready-for-human` PR listing the findings the Reviewer left unfixed, each with its reason.
 
 The Sandbox has no GitHub access, so the Host pastes into each agent's prompt every issue the issue body names (title, body, the maintainer's comments), except those under its Parent and Blocked by headings; the limits are in `loop/linked-issues.ts`.
 
@@ -90,19 +90,6 @@ The Implementer has no diff to route on yet, so its prompt names every platform'
   - Attempt budget spent: the branch is pushed as a `[#n] - Handoff: …` PR that `Refs` the issue and holds the last Attempt's filtered feedback; if it ran out in review, the last green commit too. With no commits, or if the PR fails, the feedback goes in the comment.
   - To requeue: close the PR, delete the branch on GitHub and locally (with its worktree), relabel the issue `ready-for-agent`.
 - Logs, on the Host: the project's `.sandcastle/logs/` (Implementer and Reviewer runs, raw Test run output in `<branch>-test-run.log`).
-
-### Revision
-
-To have the loop revise one of its PRs: comment on the PR (inline threads, conversation comments or a review body), then move the PR's label from `ready-for-human` to `ready-for-agent`. The issue's label stays as it is.
-
-- Picked: open PRs labelled `ready-for-agent` on an `issue/<n>-*` branch of this repo whose issue is open, oldest first, before any Eligible issue.
-- Fed to the Implementer: every unresolved inline thread with its replies, plus conversation comments and review bodies newer than the last Revision's summary. Only authors with write access count. None found: a note on the PR, back to `ready-for-human`.
-- Before the session the Host sets the local branch to the pushed one and merges the base branch into it. A local branch with unpushed work is left alone and the PR skipped with a comment.
-- The Implementer, alone (no Reviewer), gives every comment a verdict before editing: `fixed`, `declined` (stale, against the issue or standards, or outside the PR's change) or `question`. Valid comments are fixed with the tdd skill. Then the Test run; failures go back to it, on a fresh Attempt budget.
-- Green: the Host pushes, replies in each thread, resolves the `fixed` ones, and posts one summary comment that answers the unthreaded comments and names the log. No commits and nothing merged: replies only, no Test run.
-- Handoff (Attempt budget, or a conflict with the base branch): nothing is pushed or answered, the local branch goes back to the pushed one, and one comment says why.
-- Either way the PR ends on `ready-for-human`. Relabel it `ready-for-agent` for another round.
-- Logs: `.sandcastle/logs/issue-<n>-revision-<k>-implementer-<run>.log`.
 
 ## Tests
 
