@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { FixRound, Issue, OpenFinding } from "./afk-loop.js";
 import type { Platform } from "./platforms.js";
-import { fixableFindings, openFindings, pullRequestDraft, reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
+import { fixableFindings, openFindings, pullRequestDraft, reviewerPrompt, wrapUpOpenFindings, wrapUpPrompt } from "./reviewer-prompt.js";
 
 describe("reviewerPrompt", () => {
   test("reads the glossary, and the glossary map when it exists", () => {
@@ -169,6 +169,14 @@ describe("wrapUpPrompt", () => {
       prompt,
       /<open-findings>\n<finding path="web\/src\/streak\.ts" line="12">The streak resets at UTC midnight\.<\/finding>\n<finding>No test covers a skipped day\.<\/finding>\n<\/open-findings>/,
     );
+  });
+
+  test("carries the path of an Open finding of run 1 that has no line", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.wrapUp([{ text: "Shallow module.", at: { path: "web/src/streak.ts" } }]);
+
+    assert.ok(prompt.includes('<open-findings>\n<finding path="web/src/streak.ts">Shallow module.</finding>\n</open-findings>'));
   });
 
   test("names the commit run 1 reviewed and the Fix round's commits after it", () => {
@@ -359,12 +367,20 @@ describe("openFindings", () => {
     assert.deepEqual(findings, [{ text: "The streak resets at UTC midnight.", at: { path: "web/src/streak.ts", line: 12 } }]);
   });
 
-  test("a finding with no line is read as its text alone", () => {
+  test("a finding with no path is read as its text alone", () => {
     const sut = makeSUT();
 
-    const findings = sut.openFindings('<open-findings>\n<finding>No test covers a\nskipped day.</finding>\n<finding path="web/src/streak.ts">Shallow module.</finding>\n</open-findings>');
+    const findings = sut.openFindings('<open-findings>\n<finding>No test covers a\nskipped day.</finding>\n<finding line="12">No path.</finding>\n</open-findings>');
 
-    assert.deepEqual(findings, [{ text: "No test covers a\nskipped day." }, { text: "Shallow module." }]);
+    assert.deepEqual(findings, [{ text: "No test covers a\nskipped day." }, { text: "No path." }]);
+  });
+
+  test("a finding with a path and no line keeps its path", () => {
+    const sut = makeSUT();
+
+    const findings = sut.openFindings('<open-findings><finding path="web/src/streak.ts">Shallow module.</finding></open-findings>');
+
+    assert.deepEqual(findings, [{ text: "Shallow module.", at: { path: "web/src/streak.ts" } }]);
   });
 
   test("a reply with no block has none", () => {
@@ -392,6 +408,23 @@ describe("openFindings", () => {
   });
 });
 
+describe("wrapUpOpenFindings", () => {
+  test("a reply with no block has no answer, told from an empty block's none", () => {
+    const sut = makeSUT();
+
+    assert.equal(sut.wrapUpOpenFindings("All fixed.\n<promise>COMPLETE</promise>"), undefined);
+    assert.deepEqual(sut.wrapUpOpenFindings("<open-findings>\n</open-findings>"), []);
+  });
+
+  test("a block with findings gives them", () => {
+    const sut = makeSUT();
+
+    const findings = sut.wrapUpOpenFindings("<open-findings><finding>One.</finding></open-findings>");
+
+    assert.deepEqual(findings, [{ text: "One." }]);
+  });
+});
+
 // MARK: - Helpers
 
 function platform(name: string): Platform {
@@ -410,6 +443,7 @@ function makeSUT(standards = ["Prefer value types."]) {
   return {
     fixableFindings,
     openFindings,
+    wrapUpOpenFindings,
     pullRequestDraft,
     prompt: () => reviewerPrompt({ project, issue, branch: "issue/7-fix-streak", base: "abc123", standards }),
     wrapUp: (open: OpenFinding[] = runOneOpenFindings, ending: Pick<FixRound, "findingsLeft" | "failed"> = {}) =>

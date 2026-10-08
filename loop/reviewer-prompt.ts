@@ -1,7 +1,7 @@
 import type { FixRound, Issue, OpenFinding } from "./afk-loop.js";
 import type { Project } from "./loop-config.js";
 import { changesNoPlatform } from "./platforms.js";
-import { completionSignal, glossaryRule, issueBlock, lastBlock, reviewerSandbox } from "./prompt-parts.js";
+import { completionSignal, glossaryRule, hasBlock, issueBlock, lastBlock, reviewerSandbox } from "./prompt-parts.js";
 import { skill } from "./skills-plugin.js";
 
 export interface ReviewBrief {
@@ -25,8 +25,12 @@ export function openFindings(reply: string): OpenFinding[] {
   return [...findings.matchAll(/<finding([^>]*)>([\s\S]*?)<\/finding>/g)].map(([, attributes = "", text = ""]) => {
     const path = attributes.match(/\bpath="([^"]+)"/)?.[1];
     const line = attributes.match(/\bline="(\d+)"/)?.[1];
-    return { text: text.trim(), ...(path && line ? { at: { path, line: Number(line) } } : {}) };
+    return { text: text.trim(), ...(path ? { at: { path, ...(line ? { line: Number(line) } : {}) } } : {}) };
   });
+}
+
+export function wrapUpOpenFindings(reply: string): OpenFinding[] | undefined {
+  return hasBlock(reply, "open-findings") ? openFindings(reply) : undefined;
 }
 
 export function pullRequestDraft(reply: string): string | undefined {
@@ -84,7 +88,8 @@ Done means every finding is in one of the two blocks and, with no Fixable findin
 }
 
 function findingBlock({ text, at }: OpenFinding): string {
-  return `<finding${at ? ` path="${at.path}" line="${at.line}"` : ""}>${text}</finding>`;
+  const where = at ? ` path="${at.path}"${at.line ? ` line="${at.line}"` : ""}` : "";
+  return `<finding${where}>${text}</finding>`;
 }
 
 const leftReason = "carrying the Implementer's reason from <findings-left> where it gave one";

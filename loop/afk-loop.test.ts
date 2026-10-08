@@ -93,7 +93,6 @@ describe("runAfkLoop", () => {
       "relabel #12: -ready-for-agent",
     ]);
     assert.equal(tracker.pullRequests[0]?.title, "[#12] - AFK loop tracer: pick issue → PR");
-    assert.equal(tracker.pullRequests[0]?.label, "ready-for-human");
     assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #12\.[\s\S]*Reviewer[\s\S]*`logs\/review-1`\. It left no Open finding\.\n/);
   });
 
@@ -134,8 +133,8 @@ describe("runAfkLoop", () => {
       [
         "Handed off to a human: the Implementer made no commits.",
         "The Implementer's last reply (its log on the Host: `logs/implementer-1`):\n\n```text\nIssue 1 is already done.\n```",
-        "The branch `issue/1-issue-1` and its worktree stay on the Host; nothing is pushed.",
-        "To requeue for the loop: remove the local `issue/1-issue-1` branch and its worktree, relabel the issue `ready-for-agent`.",
+        "Nothing is pushed. What the session left, if anything, is on the Host: on the local branch `issue/1-issue-1`, or uncommitted in its worktree.",
+        "To requeue for the loop: remove the local `issue/1-issue-1` branch and its worktree, if they are still there, then relabel the issue `ready-for-agent`.",
       ].join("\n\n"),
     ]);
     assert.deepEqual(outcomes.map((o) => [o.issue, o.kind]), [
@@ -205,8 +204,8 @@ describe("runAfkLoop", () => {
       [
         "Handed off to a human: the Attempt budget (3) ran out without a green Test run.",
         "Feedback from the last Attempt (Test run output filtered; raw log on the Host: `raw/issue/1-issue-1`):\n\n```text\nerror: three\n```",
-        "The branch `issue/1-issue-1` and its worktree stay on the Host; nothing is pushed.",
-        "To requeue for the loop: remove the local `issue/1-issue-1` branch and its worktree, relabel the issue `ready-for-agent`.",
+        "Nothing is pushed. What the session left, if anything, is on the Host: on the local branch `issue/1-issue-1`, or uncommitted in its worktree.",
+        "To requeue for the loop: remove the local `issue/1-issue-1` branch and its worktree, if they are still there, then relabel the issue `ready-for-agent`.",
       ].join("\n\n"),
     ]);
   });
@@ -227,8 +226,8 @@ describe("runAfkLoop", () => {
       [
         "Handed off to a human: the Attempt budget (3) ran out without a green Test run.",
         `Feedback from the last Attempt:\n\n\`\`\`text\n${dirtyFeedback}\n\`\`\``,
-        "The branch `issue/1-issue-1` and its worktree stay on the Host; nothing is pushed.",
-        "To requeue for the loop: remove the local `issue/1-issue-1` branch and its worktree, relabel the issue `ready-for-agent`.",
+        "Nothing is pushed. What the session left, if anything, is on the Host: on the local branch `issue/1-issue-1`, or uncommitted in its worktree.",
+        "To requeue for the loop: remove the local `issue/1-issue-1` branch and its worktree, if they are still there, then relabel the issue `ready-for-agent`.",
       ].join("\n\n"),
     ]);
   });
@@ -417,6 +416,16 @@ describe("runAfkLoop, Open findings", () => {
     ]);
   });
 
+  test("a finding with a path and no line is in the body, after its path", async () => {
+    const onFile: OpenFinding = { text: "Shallow module.", at: { path: "web/src/streak.ts" } };
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { openFindings: [onFile, onLine] }] } });
+
+    await sut.run();
+
+    assert.equal(tracker.reviews[0]?.body, `${reviewerSays}\n\n- \`web/src/streak.ts\`: Shallow module.`);
+    assert.deepEqual(tracker.reviews[0]?.comments.map((comment) => comment.line), [12]);
+  });
+
   test("all on a line: the review has no body", async () => {
     const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { openFindings: [onLine] }] } });
 
@@ -485,6 +494,8 @@ describe("runAfkLoop, Fix round", () => {
   const onLine: OpenFinding = { text: "The streak resets at UTC midnight.", at: { path: "web/src/streak.ts", line: 12 } };
   const noLine: OpenFinding = { text: "No test covers a skipped day." };
   const branch = "issue/1-issue-1";
+  const reviewerSays = "<!-- afk-loop -->\n**The AFK loop's Reviewer:**";
+  const unfixed = `The Fix round failed, so none of these Fixable findings is fixed:\n  \n  ${fixable}`;
   const agentRuns = (calls: string[]) => calls.filter((call) => ["implement", "review", "wrap up"].includes(call));
 
   test("no Fixable finding: one Reviewer run, whose draft is the PR body, and no Fix round or wrap-up", async () => {
@@ -611,6 +622,26 @@ describe("runAfkLoop, Fix round", () => {
     assert.deepEqual(agents.wrapUps.map((fixRound) => fixRound.findingsLeft), ["Left at last."]);
   });
 
+  test("a later run of the Fix round that lists no finding left keeps the reasons of the run before", async () => {
+    const { sut, agents } = makeSUT({
+      issues: [issue(1)],
+      runs: { 1: [{ findingsLeft: "Left before the review." }, { fixableFindings: fixable }, { findingsLeft: "Left at first." }, {}] },
+      testRunResults: [green, "error: fix"],
+    });
+
+    await sut.run();
+
+    assert.deepEqual(agents.wrapUps.map((fixRound) => fixRound.findingsLeft), ["Left at first."]);
+  });
+
+  test("a first round that lists a finding left gives the wrap-up none", async () => {
+    const { sut, agents } = makeSUT({ issues: [issue(1)], runs: { 1: [{ findingsLeft: "Left before the review." }, { fixableFindings: fixable }] } });
+
+    await sut.run();
+
+    assert.deepEqual(agents.wrapUps, [{ fixableFindings: fixable, openFindings: [], reviewedHead: "head-1" }]);
+  });
+
   test("a Fixable finding left unfixed is posted as an Open finding", async () => {
     const leftOpen: OpenFinding = { text: "`x` says nothing. The Implementer left it: `x` is the name the issue asks for.", at: { path: "web/src/streak.ts", line: 12 } };
     const { sut, tracker } = makeSUT({
@@ -712,6 +743,54 @@ describe("runAfkLoop, Fix round", () => {
     assert.match(tracker.pullRequests[0]?.body ?? "", /Its logs on the Host: `logs\/review-1`, `logs\/review-2`\. It posted 1 Open finding /);
   });
 
+  test("a wrap-up that gives no Open findings block: the Host posts run 1's Open findings, and the PR body counts them", async () => {
+    const { sut, tracker } = makeSUT({
+      issues: [issue(1)],
+      runs: { 1: [{}, { fixableFindings: fixable, openFindings: [onLine, noLine] }, {}, { noOpenFindingsBlock: true }] },
+    });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes.map((outcome) => outcome.kind === "pull-request" && outcome.openFindings), [[onLine, noLine]]);
+    assert.deepEqual(tracker.reviews.map((review) => [review.body, review.comments.length]), [[`${reviewerSays}\n\n- No test covers a skipped day.`, 1]]);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /It posted 2 Open findings as review comments on this PR\./);
+  });
+
+  test("a wrap-up that gives no Open findings block after a failed Fix round: the Host also posts the Fixable findings, as one finding in the review's body", async () => {
+    const { sut, tracker } = makeSUT({
+      issues: [issue(1)],
+      runs: { 1: [{}, { fixableFindings: fixable, openFindings: [onLine] }, {}, {}, {}, { noOpenFindingsBlock: true }] },
+      testRunResults: [green, "error: fix", "error: fix", "error: fix"],
+    });
+
+    await sut.run();
+
+    assert.deepEqual(tracker.reviews.map((review) => [review.body, review.comments.length]), [[`${reviewerSays}\n\n- ${unfixed}`, 1]]);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /It posted 2 Open findings as review comments on this PR\./);
+  });
+
+  test("a wrap-up that gives an empty Open findings block after a failed Fix round: the Host posts the Fixable findings all the same", async () => {
+    const { sut, tracker } = makeSUT({
+      issues: [issue(1)],
+      runs: { 1: [{}, { fixableFindings: fixable, openFindings: [onLine] }, {}, {}, {}, { openFindings: [] }] },
+      testRunResults: [green, "error: fix", "error: fix", "error: fix"],
+    });
+
+    await sut.run();
+
+    assert.deepEqual(tracker.reviews, [{ body: `${reviewerSays}\n\n- ${unfixed}`, comments: [] }]);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /It posted 1 Open finding as review comments on this PR\./);
+  });
+
+  test("a wrap-up that gives an empty Open findings block after a green Fix round has no Open finding", async () => {
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { fixableFindings: fixable, openFindings: [onLine] }, {}, { openFindings: [] }] } });
+
+    await sut.run();
+
+    assert.deepEqual(tracker.reviews, []);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /It left no Open finding\./);
+  });
+
   test("the wrap-up's findings never start a second Fix round", async () => {
     const { sut, calls } = makeSUT({
       issues: [issue(1)],
@@ -783,6 +862,7 @@ interface Run {
   pullRequestDraft?: string;
   reply?: string;
   findingsLeft?: string;
+  noOpenFindingsBlock?: true;
 }
 
 function makeSUT(fixture: Fixture) {
@@ -938,7 +1018,8 @@ class SpyAgents implements Agents {
       wrapUp: async (fixRound) => {
         this.calls.push("wrap up");
         this.wrapUps.push(fixRound);
-        return reviewerRun();
+        const { log, openFindings, pullRequestDraft } = reviewerRun();
+        return { log, pullRequestDraft, ...(run().noOpenFindingsBlock ? {} : { openFindings }) };
       },
       putBack: async (tested) => {
         this.calls.push(`put back ${tested}`);

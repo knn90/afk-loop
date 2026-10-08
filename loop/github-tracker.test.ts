@@ -15,7 +15,7 @@ describe("githubTracker", () => {
   test("a PR is opened on the project's repo, against its base branch", async () => {
     const tracker = githubTracker(defineLoop({ ...config, baseBranch: "develop" }), hostAt(tmpdir()));
 
-    const pullRequest = await tracker.openPullRequest({ branch: "issue/4-streak", title: "[#4] - Streak", body: "Closes #4.", label: "ready-for-human" });
+    const pullRequest = await tracker.openPullRequest({ branch: "issue/4-streak", title: "[#4] - Streak", body: "Closes #4." });
 
     assert.equal(pullRequest, "https://github.com/acme/Habitat/pull/9");
     assert.deepEqual(sut.calls(), [["pr", "create", "-R", "acme/Habitat", "--base", "develop", "--head", "issue/4-streak", "--title", "[#4] - Streak", "--body", "Closes #4.", "--label", "ready-for-human"]]);
