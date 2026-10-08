@@ -97,7 +97,7 @@ describe("runAfkLoop", () => {
     ]);
     assert.equal(tracker.pullRequests[0]?.title, "[#12] - AFK loop tracer: pick issue → PR");
     assert.equal(tracker.pullRequests[0]?.label, "ready-for-human");
-    assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #12\.[\s\S]*Reviewer[\s\S]*It left no finding unfixed\.[\s\S]*`logs\/review-1`/);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #12\.[\s\S]*Reviewer[\s\S]*`logs\/review-1`\. It left no finding unfixed\.\n/);
   });
 
   test("a Leftover is discarded before the issue is redone", async () => {
@@ -966,7 +966,7 @@ describe("runAfkLoop, auto-merge", () => {
     const outcomes = await sut.run();
 
     assert.equal(outcomes[0]?.kind, "merged");
-    assert.match(tracker.pullRequests[0]?.body ?? "", /It left these findings unfixed:[^\n]*\n\n- Stock theme: belongs to #231\.\n\n/);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /Its logs on the Host: `[^`\n]+`\. It left these findings unfixed:\n\n- Stock theme: belongs to #231\.\n\n/);
   });
 
   test("on: findings left by the review still hold the PR after a Test run fix", async () => {
