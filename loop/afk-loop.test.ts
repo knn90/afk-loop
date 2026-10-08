@@ -539,7 +539,8 @@ describe("runAfkLoop, Fix round", () => {
       `open PR ${branch}`,
       "relabel #1: -ready-for-agent",
     ]);
-    assert.deepEqual(agents.feedback, [undefined, fixable]);
+    assert.deepEqual(agents.feedback, [undefined, undefined]);
+    assert.deepEqual(agents.fixing, [undefined, fixable]);
     assert.deepEqual(outcomes, [{ issue: 1, kind: "pull-request", branch, reviewLogs: ["logs/review-1", "logs/review-2"], platforms: [web], openFindings: [] }]);
   });
 
@@ -559,7 +560,8 @@ describe("runAfkLoop, Fix round", () => {
     const outcomes = await sut.run();
 
     assert.equal(outcomes[0]?.kind, "pull-request");
-    assert.deepEqual(agents.feedback, [undefined, fixable, "error: fix"]);
+    assert.deepEqual(agents.feedback, [undefined, undefined, "error: fix"]);
+    assert.deepEqual(agents.fixing, [undefined, fixable, fixable]);
     assert.deepEqual(agentRuns(calls), ["implement", "review", "implement", "implement", "wrap up"]);
     assert.equal(testRuns(calls), 3);
   });
@@ -570,7 +572,7 @@ describe("runAfkLoop, Fix round", () => {
     const outcomes = await sut.run();
 
     assert.equal(outcomes[0]?.kind, "pull-request");
-    assert.deepEqual(agents.feedback, [undefined, fixable, dirtyFeedback]);
+    assert.deepEqual(agents.feedback, [undefined, undefined, dirtyFeedback]);
     assert.equal(testRuns(calls), 2);
   });
 
@@ -583,8 +585,111 @@ describe("runAfkLoop, Fix round", () => {
 
     await sut.run();
 
-    assert.deepEqual(agents.feedback, [undefined, "error: first round", fixable, "error: fix"]);
+    assert.deepEqual(agents.feedback, [undefined, "error: first round", undefined, "error: fix"]);
+    assert.deepEqual(agents.fixing, [undefined, undefined, fixable, fixable]);
     assert.equal(testRuns(calls), 4);
+  });
+
+  test("the findings the Implementer left reach the wrap-up with its reasons", async () => {
+    const left = "web/src/streak.ts:12: `x` is the name the issue asks for.";
+    const { sut, agents } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { fixableFindings: fixable }, { commits: 0, findingsLeft: left }] } });
+
+    await sut.run();
+
+    assert.deepEqual(agents.wrapUps, [{ fixableFindings: fixable, openFindings: [], reviewedHead: "head-1", findingsLeft: left }]);
+  });
+
+  test("the findings left are those of the Fix round's last run", async () => {
+    const { sut, agents } = makeSUT({
+      issues: [issue(1)],
+      runs: { 1: [{}, { fixableFindings: fixable }, { findingsLeft: "Left at first." }, { findingsLeft: "Left at last." }] },
+      testRunResults: [green, "error: fix"],
+    });
+
+    await sut.run();
+
+    assert.deepEqual(agents.wrapUps.map((fixRound) => fixRound.findingsLeft), ["Left at last."]);
+  });
+
+  test("a Fixable finding left unfixed is posted as an Open finding", async () => {
+    const leftOpen: OpenFinding = { text: "`x` says nothing. The Implementer left it: `x` is the name the issue asks for.", at: { path: "web/src/streak.ts", line: 12 } };
+    const { sut, tracker } = makeSUT({
+      issues: [issue(1)],
+      runs: { 1: [{}, { fixableFindings: fixable }, { commits: 0, findingsLeft: "`x` is the name the issue asks for." }, { openFindings: [leftOpen] }] },
+    });
+
+    await sut.run();
+
+    assert.deepEqual(tracker.reviews.map((review) => review.comments.map((comment) => comment.body)), [[`<!-- afk-loop -->\n**The AFK loop's Reviewer:**\n\n${leftOpen.text}`]]);
+  });
+
+  test("Attempt budget spent in the Fix round is no Handoff: the branch goes back to the first round's green commit, the wrap-up runs on it and the PR opens", async () => {
+    const { sut, agents, tracker, calls } = makeSUT({
+      issues: [issue(1)],
+      runs: { 1: [{}, { fixableFindings: fixable, openFindings: [onLine] }, {}, { dirty: true }, { platforms: [web, server], findingsLeft: "None." }, { openFindings: [onLine, noLine] }] },
+      testRunResults: [green, "error: fix", "error: fix again"],
+    });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(calls.slice(5), [
+      "put back head-1",
+      "implement",
+      "inspect",
+      `test run ${branch}`,
+      "implement",
+      "inspect",
+      "implement",
+      "inspect",
+      `test run ${branch}`,
+      "put back head-1",
+      "wrap up",
+      "put back head-1",
+      `close ${branch}`,
+      `push ${branch}`,
+      `open PR ${branch}`,
+      "relabel #1: -ready-for-agent",
+      `post review https://pr/${branch}`,
+    ]);
+    assert.deepEqual(agents.wrapUps, [{ fixableFindings: fixable, openFindings: [onLine], reviewedHead: "head-1", findingsLeft: "None.", failed: true }]);
+    assert.deepEqual(outcomes, [
+      { issue: 1, kind: "pull-request", branch, reviewLogs: ["logs/review-1", "logs/review-2"], platforms: [web], openFindings: [onLine, noLine], fixRoundFailed: true },
+    ]);
+    assert.deepEqual(tracker.comments, []);
+    assert.equal(tracker.reviews.length, 1);
+  });
+
+  test("after a failed Fix round the PR body's Host lines say so, and that its fixes are not included", async () => {
+    const { sut, tracker } = makeSUT({
+      issues: [issue(1)],
+      runs: { 1: [{}, { fixableFindings: fixable }, {}, {}, {}, { openFindings: [noLine], pullRequestDraft: "## Summary\n\nGreen work." }] },
+      testRunResults: [green, "error: fix", "error: fix", "error: fix"],
+    });
+
+    await sut.run();
+
+    assert.match(
+      tracker.pullRequests[0]?.body ?? "",
+      /^Closes #1\.\n\n## Summary\n\nGreen work\.\n\nImplemented by[^\n]*\n\nReviewed by[^\n]*It posted 1 Open finding as review comments on this PR\.\n\nThe Fix round failed its Test run, so its fixes are not included: the Reviewer's Fixable findings are among the Open findings\.\n\nVerified: the Test run passed on the reviewed commit \(the web tests\)\.$/,
+    );
+  });
+
+  test("a Fix round that ends green says nothing of a failure in the PR body", async () => {
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { fixableFindings: fixable }] }, testRunResults: [green, "error: fix"] });
+
+    await sut.run();
+
+    assert.ok(!(tracker.pullRequests[0]?.body ?? "").includes("Fix round"));
+  });
+
+  test("a Handoff comes only from the first round: budget spent before any green Test run", async () => {
+    const { sut, tracker, calls } = makeSUT({ issues: [issue(1)], testRunResults: ["error: one", "error: two", "error: three"] });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes, [{ issue: 1, kind: "handoff", branch, reason: "attempt-budget", log: "error: three", rawLog: `raw/${branch}` }]);
+    assert.ok(!calls.includes("review"));
+    assert.deepEqual(tracker.pullRequests, []);
   });
 
   test("the wrap-up gets run 1's Fixable and Open findings and the commit it reviewed", async () => {
@@ -677,6 +782,7 @@ interface Run {
   openFindings?: OpenFinding[];
   pullRequestDraft?: string;
   reply?: string;
+  findingsLeft?: string;
 }
 
 function makeSUT(fixture: Fixture) {
@@ -769,6 +875,7 @@ class SpyAgents implements Agents {
   startedIssues: number[] = [];
   started: Issue[] = [];
   feedback: (string | undefined)[] = [];
+  fixing: (string | undefined)[] = [];
   wrapUps: FixRound[] = [];
   sandboxes: SandboxExec[] = [];
 
@@ -816,11 +923,13 @@ class SpyAgents implements Agents {
     };
     return {
       exec: this.openSandbox(),
-      implement: async (feedback) => {
+      implement: async (feedback, fixableFindings) => {
         this.calls.push("implement");
         this.feedback.push(feedback);
+        this.fixing.push(fixableFindings);
         agentRun();
-        return { reply: run().reply ?? "", log: `logs/implementer-${this.feedback.length}` };
+        const { reply = "", findingsLeft } = run();
+        return { reply, log: `logs/implementer-${this.feedback.length}`, ...(findingsLeft ? { findingsLeft } : {}) };
       },
       review: async () => {
         this.calls.push("review");

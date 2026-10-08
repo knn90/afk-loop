@@ -12,7 +12,7 @@ export interface ReviewBrief {
   readonly standards: readonly string[];
 }
 
-export interface WrapUpBrief extends Omit<ReviewBrief, "standards"> {
+export interface WrapUpBrief extends ReviewBrief {
   readonly fixRound: FixRound;
 }
 
@@ -46,14 +46,18 @@ function draftRules(issue: Issue): string {
   - Evidence: quote only output of commands you run in this Sandbox. The Host adds what the Test run verified.`;
 }
 
+function standardsBlock(project: Project, standards: readonly string[]): string {
+  return `<coding-standards>
+${standards.length > 0 ? standards.join("\n\n") : `None apply: this branch ${changesNoPlatform(project.platforms)}.`}
+</coding-standards>`;
+}
+
 export function reviewerPrompt({ project, issue, branch, base, standards }: ReviewBrief): string {
   return `You are the Reviewer for issue #${issue.number} of ${project.repo}, working on branch \`${branch}\`. The Implementer's work on it passed the Test run.
 
 ${issueBlock(issue)}
 
-<coding-standards>
-${standards.length > 0 ? standards.join("\n\n") : `None apply: this branch ${changesNoPlatform(project.platforms)}.`}
-</coding-standards>
+${standardsBlock(project, standards)}
 
 How to work:
 
@@ -83,13 +87,33 @@ function findingBlock({ text, at }: OpenFinding): string {
   return `<finding${at ? ` path="${at.path}" line="${at.line}"` : ""}>${text}</finding>`;
 }
 
-export function wrapUpPrompt({ project, issue, branch, base, fixRound }: WrapUpBrief): string {
-  const { fixableFindings, openFindings, reviewedHead } = fixRound;
+const leftReason = "carrying the Implementer's reason from <findings-left> where it gave one";
 
-  return `You are the Reviewer for issue #${issue.number} of ${project.repo}, wrapping up your review of branch \`${branch}\`. You reviewed it at \`${reviewedHead}\`. The Implementer then had one Fix round on your Fixable findings: its commits are \`git log ${reviewedHead}..HEAD\`, and there may be none. The branch passed the Test run.
+export function wrapUpPrompt({ project, issue, branch, base, standards, fixRound }: WrapUpBrief): string {
+  const { fixableFindings, openFindings, reviewedHead, findingsLeft, failed } = fixRound;
+  const fixRoundEnded = failed
+    ? `The Implementer then had one Fix round on your Fixable findings. It failed its Test run, so the Host dropped its commits: the branch is back at \`${reviewedHead}\`, the commit that passed the Test run, and none of your Fixable findings is fixed.`
+    : `The Implementer then had one Fix round on your Fixable findings: its commits are \`git log ${reviewedHead}..HEAD\`, and there may be none. The branch passed the Test run.`;
+  const review = failed
+    ? `- Review nothing again: no commit follows the one you reviewed. Report no Fixable finding: there is no second Fix round.
+- Every Fixable finding becomes an Open finding, ${leftReason}.
+- Keep each of your Open findings as it is: the diff is the one you reviewed.`
+    : `- Review the Fix round's commits only. Invoke the \`${skill("code-review")}\` skill with the Skill tool. Its inputs are all here:
+  - Fixed point: \`${reviewedHead}\`, so the diff is \`git diff ${reviewedHead}...HEAD\`.
+  - Spec: your Fixable findings and the <issue> block.
+  - Standards: the <coding-standards> block.
+  - With no commit after \`${reviewedHead}\` there is nothing to review: skip the skill.
+- Do no Design review, and do not review the rest of the branch again.
+- Every finding in the Fix round's commits is an Open finding, whatever its kind: there is no second Fix round, so report no Fixable finding.
+- Check each Fixable finding against \`git diff ${base}...HEAD\`. One that was not fixed becomes an Open finding, ${leftReason}.
+- Restate each of your Open findings against that diff: its text as it holds now, its \`path\` and \`line\` as HEAD has them.`;
+  const finalOpenFindings = failed ? "yours and every Fixable finding" : "yours restated, each Fixable finding not fixed and each finding in the Fix round's commits";
+  const checked = failed ? "every Fixable finding is an Open finding" : "the Fix round's commits are reviewed, every Fixable finding is checked";
+
+  return `You are the Reviewer for issue #${issue.number} of ${project.repo}, wrapping up your review of branch \`${branch}\`. You reviewed it at \`${reviewedHead}\`. ${fixRoundEnded}
 
 ${issueBlock(issue)}
-
+${failed ? "" : `\n${standardsBlock(project, standards)}\n`}
 Your Fixable findings:
 
 <fixable-findings>
@@ -102,17 +126,21 @@ Your Open findings:
 ${openFindings.map(findingBlock).join("\n")}
 </open-findings>
 
+The findings the Implementer left, and why:
+
+<findings-left>
+${findingsLeft ?? ""}
+</findings-left>
+
 How to work:
 
 ${readOnly}
-- Do not review the branch again, and report no new Fixable finding: there is no second Fix round.
-- Check each Fixable finding against \`git diff ${base}...HEAD\`. One that was not fixed becomes an Open finding.
-- Restate each of your Open findings against that diff: its text as it holds now, its \`path\` and \`line\` as HEAD has them.
-- Give the final Open findings, yours restated and each Fixable finding not fixed, in your reply between \`<open-findings>\` and \`</open-findings>\`, ${openFindingsFormat(base)}
+${review}
+- Give the final Open findings, ${finalOpenFindings}, in your reply between \`<open-findings>\` and \`</open-findings>\`, ${openFindingsFormat(base)}
 - Then invoke the \`${skill("pr")}\` skill with the Skill tool and draft the PR body for \`git diff ${base}...HEAD\`.
 ${draftRules(issue)}
 - ${glossaryRule}
 ${reviewerSandbox(project)}
 
-Done means every Fixable finding is checked, the final Open findings are in your reply, and the draft is in your reply between \`<pr-body>\` and \`</pr-body>\`. Then reply with ${completionSignal}.`;
+Done means ${checked}, the final Open findings are in your reply, and the draft is in your reply between \`<pr-body>\` and \`</pr-body>\`. Then reply with ${completionSignal}.`;
 }

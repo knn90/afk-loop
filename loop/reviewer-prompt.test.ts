@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import type { Issue, OpenFinding } from "./afk-loop.js";
+import type { FixRound, Issue, OpenFinding } from "./afk-loop.js";
 import type { Platform } from "./platforms.js";
 import { fixableFindings, openFindings, pullRequestDraft, reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
 
@@ -179,25 +179,88 @@ describe("wrapUpPrompt", () => {
     assert.match(prompt, /You reviewed it at `def456`\.[^\n]*`git log def456\.\.HEAD`, and there may be none/);
   });
 
-  test("asks for no new review and no new Fixable finding", () => {
+  test("reviews the Fix round's commits only, with the code-review skill and no Design review", () => {
     const sut = makeSUT();
 
     const prompt = sut.wrapUp();
 
-    assert.ok(!prompt.includes("code-review"));
+    assert.ok(
+      prompt.includes(
+        [
+          "- Review the Fix round's commits only. Invoke the `mattpocock-skills:code-review` skill with the Skill tool. Its inputs are all here:",
+          "  - Fixed point: `def456`, so the diff is `git diff def456...HEAD`.",
+          "  - Spec: your Fixable findings and the <issue> block.",
+          "  - Standards: the <coding-standards> block.",
+          "  - With no commit after `def456` there is nothing to review: skip the skill.",
+          "- Do no Design review, and do not review the rest of the branch again.",
+        ].join("\n"),
+      ),
+    );
+    assert.match(prompt, /<coding-standards>\nPrefer value types\.\n<\/coding-standards>/);
     assert.ok(!prompt.includes("codebase-design"));
-    assert.ok(!prompt.includes("<coding-standards>"));
-    assert.match(prompt, /Do not review the branch again, and report no new Fixable finding: there is no second Fix round\./);
   });
 
-  test("asks for the final Open findings: run 1's restated against the final diff, plus each Fixable finding not fixed", () => {
+  test("every finding in the Fix round's commits is an Open finding, whatever its kind", () => {
     const sut = makeSUT();
 
     const prompt = sut.wrapUp();
 
-    assert.match(prompt, /Check each Fixable finding against `git diff abc123\.\.\.HEAD`\. One that was not fixed becomes an Open finding\./);
+    assert.ok(prompt.includes("- Every finding in the Fix round's commits is an Open finding, whatever its kind: there is no second Fix round, so report no Fixable finding."));
+  });
+
+  test("carries the findings the Implementer left, and puts its reason on each one left unfixed", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.wrapUp(runOneOpenFindings, { findingsLeft: "1. `x` is the name the issue asks for." });
+
+    assert.ok(prompt.includes("The findings the Implementer left, and why:\n\n<findings-left>\n1. `x` is the name the issue asks for.\n</findings-left>"));
+    assert.ok(
+      prompt.includes(
+        "- Check each Fixable finding against `git diff abc123...HEAD`. One that was not fixed becomes an Open finding, carrying the Implementer's reason from <findings-left> where it gave one.",
+      ),
+    );
+  });
+
+  test("an Implementer that listed no finding left has an empty block", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.wrapUp();
+
+    assert.match(prompt, /<findings-left>\n\n<\/findings-left>/);
+  });
+
+  test("asks for the final Open findings: run 1's restated, each Fixable finding not fixed, each finding in the Fix round's commits", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.wrapUp();
+
     assert.match(prompt, /Restate each of your Open findings against that diff: its text as it holds now, its `path` and `line` as HEAD has them\./);
-    assert.match(prompt, /Give the final Open findings, yours restated and each Fixable finding not fixed, in your reply between `<open-findings>` and `<\/open-findings>`[^\n]*`<finding path="path\/to\/file" line="12">/);
+    assert.match(
+      prompt,
+      /Give the final Open findings, yours restated, each Fixable finding not fixed and each finding in the Fix round's commits, in your reply between `<open-findings>` and `<\/open-findings>`[^\n]*`<finding path="path\/to\/file" line="12">/,
+    );
+    assert.match(prompt, /Done means the Fix round's commits are reviewed, every Fixable finding is checked, the final Open findings are in your reply/);
+  });
+
+  test("after a failed Fix round: its commits are dropped, nothing is reviewed and every Fixable finding becomes an Open finding", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.wrapUp(runOneOpenFindings, { failed: true, findingsLeft: "1. `x` is the name the issue asks for." });
+
+    assert.ok(
+      prompt.includes(
+        "You reviewed it at `def456`. The Implementer then had one Fix round on your Fixable findings. It failed its Test run, so the Host dropped its commits: the branch is back at `def456`, the commit that passed the Test run, and none of your Fixable findings is fixed.",
+      ),
+    );
+    assert.ok(prompt.includes("- Review nothing again: no commit follows the one you reviewed. Report no Fixable finding: there is no second Fix round."));
+    assert.ok(prompt.includes("- Every Fixable finding becomes an Open finding, carrying the Implementer's reason from <findings-left> where it gave one."));
+    assert.ok(prompt.includes("<findings-left>\n1. `x` is the name the issue asks for.\n</findings-left>"));
+    assert.match(prompt, /Give the final Open findings, yours and every Fixable finding, in your reply between `<open-findings>` and `<\/open-findings>`/);
+    assert.match(prompt, /invoke the `mattpocock-skills:pr` skill with the Skill tool and draft the PR body for `git diff abc123\.\.\.HEAD`\./);
+    assert.match(prompt, /Done means every Fixable finding is an Open finding, the final Open findings are in your reply, and the draft is in your reply between `<pr-body>` and `<\/pr-body>`\./);
+    assert.ok(!prompt.includes("code-review"));
+    assert.ok(!prompt.includes("<coding-standards>"));
+    assert.ok(!prompt.includes("git log"));
   });
 
   test("drafts the PR body with the pr skill, for the branch as the Fix round left it", () => {
@@ -349,13 +412,14 @@ function makeSUT(standards = ["Prefer value types."]) {
     openFindings,
     pullRequestDraft,
     prompt: () => reviewerPrompt({ project, issue, branch: "issue/7-fix-streak", base: "abc123", standards }),
-    wrapUp: (open: OpenFinding[] = runOneOpenFindings) =>
+    wrapUp: (open: OpenFinding[] = runOneOpenFindings, ending: Pick<FixRound, "findingsLeft" | "failed"> = {}) =>
       wrapUpPrompt({
         project,
         issue,
         branch: "issue/7-fix-streak",
         base: "abc123",
-        fixRound: { fixableFindings: "web/src/streak.ts:12: rename `x`.", openFindings: open, reviewedHead: "def456" },
+        standards,
+        fixRound: { fixableFindings: "web/src/streak.ts:12: rename `x`.", openFindings: open, reviewedHead: "def456", ...ending },
       }),
   };
 }

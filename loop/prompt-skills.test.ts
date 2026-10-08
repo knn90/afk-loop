@@ -32,6 +32,8 @@ function everyPrompt(): string[] {
   return [
     implementerPrompt(project, issue, branch),
     reviewerPrompt({ project, issue, branch, base, standards: [] }),
-    wrapUpPrompt({ project, issue, branch, base, fixRound: { fixableFindings: "Rename `x`.", openFindings: [], reviewedHead: "def456" } }),
+    implementerPrompt(project, issue, branch, undefined, "Rename `x`."),
+    wrapUpPrompt({ project, issue, branch, base, standards: [], fixRound: { fixableFindings: "Rename `x`.", openFindings: [], reviewedHead: "def456" } }),
+    wrapUpPrompt({ project, issue, branch, base, standards: [], fixRound: { fixableFindings: "Rename `x`.", openFindings: [], reviewedHead: "def456", failed: true } }),
   ];
 }

@@ -92,7 +92,7 @@ export interface Session {
 }
 
 export interface IssueSession extends Session {
-  implement(feedback?: string): Promise<ImplementerRun>;
+  implement(feedback?: string, fixableFindings?: string): Promise<ImplementerRun>;
   review(): Promise<FirstReview>;
   wrapUp(fixRound: FixRound): Promise<Review>;
   putBack(head: string): Promise<void>;
@@ -101,6 +101,7 @@ export interface IssueSession extends Session {
 export interface ImplementerRun {
   readonly reply: string;
   readonly log: string;
+  readonly findingsLeft?: string;
 }
 
 export interface Review {
@@ -117,6 +118,8 @@ export interface FixRound {
   readonly fixableFindings: string;
   readonly openFindings: readonly OpenFinding[];
   readonly reviewedHead: string;
+  readonly findingsLeft?: string;
+  readonly failed?: true;
 }
 
 export interface Agents {
@@ -135,7 +138,7 @@ export type HandoffOutcome = {
   readonly kind: "handoff";
   readonly branch: string;
 } & (
-  | { readonly reason: "attempt-budget"; readonly lastGreenHead?: string; readonly log: string; readonly rawLog?: string }
+  | { readonly reason: "attempt-budget"; readonly log: string; readonly rawLog?: string }
   | { readonly reason: "no-commits"; readonly lastReply: string; readonly implementerLog: string }
 );
 
@@ -147,6 +150,7 @@ export interface ReviewedOutcome {
   readonly platforms: readonly Platform[];
   readonly openFindings: readonly OpenFinding[];
   readonly pullRequestDraft?: string;
+  readonly fixRoundFailed?: true;
 }
 
 export type Outcome =
@@ -167,6 +171,7 @@ export const defaultCap = 5;
 const priorities = ["priority:p0", "priority:p1", "priority:p2"];
 const implementedBy = "Implemented by the AFK loop's Implementer in the Sandbox.";
 const reviewedBy = "Reviewed by the AFK loop's Reviewer in the Sandbox.";
+const fixRoundFailed = "The Fix round failed its Test run, so its fixes are not included: the Reviewer's Fixable findings are among the Open findings.";
 const reviewerSays = `${loopMarker}\n**The AFK loop's Reviewer:**`;
 
 export function issueBranchPrefix(issueNumber: number): string {
@@ -238,18 +243,41 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
   let feedback: string | undefined;
   let worktree: WorktreeState | undefined;
   let fixRound: FixRound | undefined;
+  let reviewed: WorktreeState | undefined;
+  let findingsLeft: string | undefined;
   let failures = 0;
   const reviewLogs: string[] = [];
   const fail = (nextFeedback: string) => {
     feedback = nextFeedback;
     failures += 1;
   };
+  const reviewerRun = async <R extends Review>(run: Promise<R>, head: string): Promise<R> => {
+    const review = await run;
+    await session.putBack(head);
+    reviewLogs.push(review.log);
+    return review;
+  };
+  const pullRequest = ({ openFindings, pullRequestDraft }: Review, platforms: readonly Platform[], failed?: true): Outcome => ({
+    issue: issue.number,
+    kind: "pull-request",
+    branch,
+    reviewLogs,
+    platforms,
+    openFindings,
+    ...(pullRequestDraft ? { pullRequestDraft } : {}),
+    ...(failed ? { fixRoundFailed: failed } : {}),
+  });
+  const wrapUp = async (fixRound: FixRound, { head, platforms }: WorktreeState, failed?: true): Promise<Outcome> => {
+    const review = await reviewerRun(session.wrapUp({ ...fixRound, ...(findingsLeft ? { findingsLeft } : {}), ...(failed ? { failed } : {}) }), head);
+    return pullRequest(review, platforms, failed);
+  };
   while (failures < attemptBudget) {
-    const run = await session.implement(feedback);
+    const run = await session.implement(feedback, fixRound?.fixableFindings);
     worktree = await session.inspect();
     if (!fixRound && !worktree.dirty && worktree.commitsAhead === 0) {
       return { issue: issue.number, kind: "handoff", branch, reason: "no-commits", lastReply: run.reply, implementerLog: run.log };
     }
+    findingsLeft = run.findingsLeft;
     if (worktree.dirty) {
       fail(dirtyFeedback);
       continue;
@@ -267,28 +295,17 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
       }
     }
 
-    const { head, platforms } = worktree;
-    const reviewerRun = async <R extends Review>(run: Promise<R>): Promise<R> => {
-      const review = await run;
-      await session.putBack(head);
-      reviewLogs.push(review.log);
-      return review;
-    };
-    const reviewed = ({ openFindings, pullRequestDraft }: Review): Outcome => ({
-      issue: issue.number,
-      kind: "pull-request",
-      branch,
-      reviewLogs,
-      platforms,
-      openFindings,
-      ...(pullRequestDraft ? { pullRequestDraft } : {}),
-    });
-    if (fixRound) return reviewed(await reviewerRun(session.wrapUp(fixRound)));
-    const review = await reviewerRun(session.review());
-    if (!review.fixableFindings) return reviewed(review);
-    fixRound = { fixableFindings: review.fixableFindings, openFindings: review.openFindings, reviewedHead: head };
+    if (fixRound) return wrapUp(fixRound, worktree);
+    const review = await reviewerRun(session.review(), worktree.head);
+    if (!review.fixableFindings) return pullRequest(review, worktree.platforms);
+    fixRound = { fixableFindings: review.fixableFindings, openFindings: review.openFindings, reviewedHead: worktree.head };
+    reviewed = worktree;
     lastFailure = undefined;
-    feedback = review.fixableFindings;
+    feedback = undefined;
+  }
+  if (fixRound && reviewed) {
+    await session.putBack(reviewed.head);
+    return wrapUp(fixRound, reviewed, true);
   }
   const log = worktree?.dirty && lastFailure ? `${dirtyFeedback}\n\nThe Test run before it reported:\n\n${lastFailure.log}` : (feedback ?? "");
   return {
@@ -298,7 +315,6 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
     reason: "attempt-budget",
     log,
     ...(lastFailure ? { rawLog: testRunner.rawLogPath(branch) } : {}),
-    ...(fixRound ? { lastGreenHead: fixRound.reviewedHead } : {}),
   };
 }
 
@@ -306,7 +322,7 @@ function withoutClosingKeywords(draft: string): string {
   return draft.replace(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(:?\s+(?:[\w.-]+\/[\w.-]+)?#\d+)/gi, "Refs$1");
 }
 
-async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, openFindings, pullRequestDraft }: ReviewedOutcome, loop: AfkLoopOptions): Promise<string> {
+async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, openFindings, pullRequestDraft, fixRoundFailed: failed }: ReviewedOutcome, loop: AfkLoopOptions): Promise<string> {
   await loop.tracker.pushBranch(branch);
   const pullRequest = await loop.tracker.openPullRequest({
     branch,
@@ -316,6 +332,7 @@ async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, op
       ...(pullRequestDraft ? [withoutClosingKeywords(pullRequestDraft)] : []),
       implementedBy,
       `${reviewedBy} Its logs on the Host: ${reviewLogs.map((log) => `\`${log}\``).join(", ")}. ${openFindingsPosted(openFindings.length)}`,
+      ...(failed ? [fixRoundFailed] : []),
       verifiedLine(loop.platforms, platforms),
     ].join("\n\n"),
     label: readyForHuman,
@@ -375,10 +392,7 @@ export function describeHandoff(handoff: HandoffOutcome): { why: string; details
       details: `The Implementer's last reply (its log on the Host: \`${handoff.implementerLog}\`):\n\n${fenced(handoff.lastReply)}`,
     };
   }
-  const why = handoff.lastGreenHead
-    ? `the Attempt budget (${attemptBudget}) ran out in review, after the Implementer's green Test run (last green at \`${handoff.lastGreenHead}\`)`
-    : budgetSpentWhy;
-  return { why, details: lastAttemptDetails(handoff.log, handoff.rawLog) };
+  return { why: budgetSpentWhy, details: lastAttemptDetails(handoff.log, handoff.rawLog) };
 }
 
 function summary(issue: Issue): string {
