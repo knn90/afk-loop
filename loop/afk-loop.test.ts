@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
   runAfkLoop,
+  type OpenFinding,
+  type PullRequestReview,
   type Agents,
   type Backlog,
   type Issue,
@@ -9,18 +11,13 @@ import {
   type LinkedIssue,
   type LocalBranch,
   type PullRequest,
-  type NumberedComment,
   type Relabel,
-  type ReviewComment,
-  type RevisionPullRequest,
-  type RevisionStart,
   type SandboxExec,
   type TestRunner,
   type Tracker,
 } from "./afk-loop.js";
 import { dirtyFeedback } from "./loop-rules.js";
 import type { Platform } from "./platforms.js";
-import { fixedWithoutCommitFeedback } from "./revision.js";
 
 describe("runAfkLoop", () => {
   test("empty backlog is a clean no-op", async () => {
@@ -81,7 +78,7 @@ describe("runAfkLoop", () => {
 
     const outcomes = await sut.run();
 
-    assert.deepEqual(outcomes, [{ issue: 12, kind: "pull-request", branch, reviewLogs: ["logs/review-1"], platforms: [web], openFindings: false }]);
+    assert.deepEqual(outcomes, [{ issue: 12, kind: "pull-request", branch, reviewLogs: ["logs/review-1"], platforms: [web], openFindings: [] }]);
     assert.deepEqual(calls, [
       `start ${branch}`,
       "implement",
@@ -97,7 +94,7 @@ describe("runAfkLoop", () => {
     ]);
     assert.equal(tracker.pullRequests[0]?.title, "[#12] - AFK loop tracer: pick issue → PR");
     assert.equal(tracker.pullRequests[0]?.label, "ready-for-human");
-    assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #12\.[\s\S]*Reviewer[\s\S]*`logs\/review-1`\. It left no finding unfixed\.\n/);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #12\.[\s\S]*Reviewer[\s\S]*`logs\/review-1`\. It left no Open finding\.\n/);
   });
 
   test("a Leftover is discarded before the issue is redone", async () => {
@@ -165,7 +162,7 @@ describe("runAfkLoop", () => {
 
     const outcomes = await sut.run();
 
-    assert.deepEqual(outcomes, [{ issue: 1, kind: "pull-request", branch: "issue/1-issue-1", reviewLogs: ["logs/review-1"], platforms: [web], openFindings: false }]);
+    assert.deepEqual(outcomes, [{ issue: 1, kind: "pull-request", branch: "issue/1-issue-1", reviewLogs: ["logs/review-1"], platforms: [web], openFindings: [] }]);
     assert.deepEqual(agents.feedback, [undefined, "error: boom"]);
     assert.equal(testRuns(calls), 3);
   });
@@ -449,18 +446,6 @@ describe("runAfkLoop", () => {
     assert.deepEqual(testRunner.sandboxes, [agents.sandboxes[0], agents.sandboxes[0]]);
   });
 
-  test("a Revision's Test run executes in its Sandbox", async () => {
-    const { sut, agents, testRunner } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1")] },
-    });
-
-    await sut.run();
-
-    assert.deepEqual(testRunner.sandboxes, [agents.sandboxes[0]]);
-  });
-
   test("an adapter error is reported and stops the loop", async () => {
     const { sut, agents } = makeSUT({ issues: [issue(1), issue(2)], pushFails: true });
 
@@ -483,401 +468,134 @@ describe("runAfkLoop", () => {
   });
 });
 
-describe("runAfkLoop, Revision", () => {
-  const branch = "issue/7-fix-streak";
-
-  test("Revision PRs are worked before Eligible issues, oldest first, and count against the cap", async () => {
-    const { sut, calls } = makeSUT({
-      issues: [issue(1), issue(2)],
-      revisionPullRequests: [pullRequest(31, 9), pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1")], 31: [thread("T2")] },
-    });
-
-    const outcomes = await sut.run(3);
-
-    assert.deepEqual(outcomes.map((o) => [o.issue, o.kind]), [
-      [7, "revised"],
-      [9, "revised"],
-      [1, "pull-request"],
-    ]);
-    assert.deepEqual(calls.filter((call) => call.startsWith("start")), [
-      "start revision issue/7-fix-streak",
-      "start revision issue/9-fix-streak",
-      "start issue/1-issue-1",
-    ]);
-  });
-
-  test("a green Revision is pushed, answered in each thread, summarised and handed back, with only fixed threads resolved", async () => {
-    const { sut, tracker, agents, calls } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1"), thread("T2"), thread("T3"), conversation("Add a test for zero.")] },
-      revisions: {
-        21: { runs: [{ output: replies("C1 | fixed | Renamed.", "C2 | declined | Standards ask for value types.", "C3 | question | Which screen?", "C4 | fixed | Test added.") }] },
-      },
-    });
-
-    const outcomes = await sut.run();
-
-    assert.deepEqual(outcomes, [{ issue: 7, kind: "revised", pullRequest: 21, pushed: true, log: "logs/revision-1" }]);
-    assert.deepEqual(calls, [
-      `start revision ${branch}`,
-      "inspect",
-      "revise",
-      "inspect",
-      `test run ${branch}`,
-      `push ${branch}`,
-      `close ${branch}`,
-      "reply T1",
-      "resolve T1",
-      "reply T2",
-      "reply T3",
-      "comment on #21",
-      "relabel #21: -ready-for-agent +ready-for-human",
-    ]);
-    assert.deepEqual(agents.revisionComments[0]?.map((comment) => comment.id), ["C1", "C2", "C3", "C4"]);
-    assert.deepEqual(tracker.replies, [
-      { thread: "T1", body: "<!-- afk-loop -->\n**fixed**: Renamed." },
-      { thread: "T2", body: "<!-- afk-loop -->\n**declined**: Standards ask for value types." },
-      { thread: "T3", body: "<!-- afk-loop -->\n**question**: Which screen?" },
-    ]);
-    assert.match(
-      tracker.comments[0] ?? "",
-      /^<!-- afk-loop:revision-summary -->\n\nRevision 1: 2 fixed, 1 declined, 1 question\.[\s\S]*Pushed `head-1`[\s\S]*"Add a test for zero\." → \*\*fixed\*\*: Test added\.[\s\S]*`logs\/revision-1`/,
-    );
-  });
-
-  test("a Revision with every comment declined or questioned answers them without a Test run or a push", async () => {
-    const { sut, tracker, calls } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1"), thread("T2")] },
-      revisions: { 21: { runs: [{ commits: 0, output: replies("C1 | declined | Already done.", "C2 | question | Which one?") }] } },
-    });
-
-    const outcomes = await sut.run();
-
-    assert.deepEqual(outcomes, [{ issue: 7, kind: "revised", pullRequest: 21, pushed: false, log: "logs/revision-1" }]);
-    assert.equal(testRuns(calls), 0);
-    assert.deepEqual(tracker.pushed, []);
-    assert.deepEqual(tracker.resolved, []);
-    assert.equal(tracker.replies.length, 2);
-    assert.match(tracker.comments[0] ?? "", /Nothing to push/);
-    assert.equal(calls.at(-1), "relabel #21: -ready-for-agent +ready-for-human");
-  });
-
-  test("a merge of main is tested and pushed even when every comment is declined", async () => {
-    const { sut, tracker, calls } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1")] },
-      revisions: { 21: { mergedMain: true, runs: [{ commits: 0, output: replies("C1 | declined | Already done.") }] } },
-    });
-
-    const outcomes = await sut.run();
-
-    assert.equal(outcomes[0]?.kind === "revised" && outcomes[0].pushed, true);
-    assert.equal(testRuns(calls), 1);
-    assert.deepEqual(tracker.pushed, [branch]);
-  });
-
-  test("a Revision PR with no open comments is handed back with a note and no session", async () => {
-    const { sut, tracker, calls } = makeSUT({ issues: [], revisionPullRequests: [pullRequest(21, 7)] });
-
-    const outcomes = await sut.run();
-
-    assert.deepEqual(outcomes, [{ issue: 7, kind: "no-review-comments", pullRequest: 21 }]);
-    assert.deepEqual(calls, ["comment on #21", "relabel #21: -ready-for-agent +ready-for-human"]);
-    assert.match(tracker.comments[0] ?? "", /^<!-- afk-loop -->\nRevision: no open review comments found/);
-  });
-
-  test("a merge conflict with main hands the PR off untouched", async () => {
-    const { sut, tracker, calls } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1")] },
-      revisions: { 21: { start: { kind: "merge-conflict", files: ["Sources/Streak.swift"] } } },
-    });
-
-    const outcomes = await sut.run();
-
-    assert.deepEqual(outcomes, [
-      { issue: 7, kind: "revision-handoff", pullRequest: 21, reason: "merge-conflict", baseBranch: "main", files: ["Sources/Streak.swift"] },
-    ]);
-    assert.deepEqual(calls, [`start revision ${branch}`, "comment on #21", "relabel #21: -ready-for-agent +ready-for-human"]);
-    assert.match(tracker.comments[0] ?? "", /merging `main` into the branch conflicts[\s\S]*Sources\/Streak\.swift[\s\S]*Nothing was pushed/);
-  });
-
-  test("a merge conflict names the configured base branch", async () => {
-    const { sut, tracker } = makeSUT({
-      issues: [],
-      baseBranch: "develop",
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1")] },
-      revisions: { 21: { start: { kind: "merge-conflict", files: ["Sources/Streak.swift"] } } },
-    });
-
-    await sut.run();
-
-    assert.match(tracker.comments[0] ?? "", /merging `develop` into the branch conflicts/);
-  });
-
-  test("hand work on the local branch is never overwritten: the PR is skipped with a comment", async () => {
-    const { sut, tracker, calls } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1")] },
-      revisions: { 21: { start: { kind: "hand-work" } } },
-    });
-
-    const outcomes = await sut.run();
-
-    assert.deepEqual(outcomes, [{ issue: 7, kind: "local-branch", branch }]);
-    assert.deepEqual(calls, [`start revision ${branch}`, "comment on #21", "relabel #21: -ready-for-agent +ready-for-human"]);
-    assert.match(tracker.comments[0] ?? "", /local `issue\/7-fix-streak` has work that isn't pushed/);
-  });
-
-  test("a failed Test run goes back to the Implementer, and a green one is pushed", async () => {
-    const { sut, agents, tracker } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1")] },
-      testRunResults: ["error: boom"],
-    });
-
-    const outcomes = await sut.run();
-
-    assert.equal(outcomes[0]?.kind, "revised");
-    assert.deepEqual(agents.revisionFeedback, [undefined, "error: boom"]);
-    assert.deepEqual(tracker.pushed, [branch]);
-    assert.match(tracker.comments[0] ?? "", /Pushed `head-2`/);
-  });
-
-  test("a spent Attempt budget hands the Revision off with the last feedback: nothing pushed, answered or resolved", async () => {
-    const { sut, tracker, agents, calls } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1")] },
-      testRunResults: ["error: one", "error: two", "error: three"],
-    });
-
-    const outcomes = await sut.run();
-
-    assert.deepEqual(outcomes, [
-      { issue: 7, kind: "revision-handoff", pullRequest: 21, reason: "attempt-budget", log: "error: three", rawLog: `raw/${branch}` },
-    ]);
-    assert.equal(agents.revisionFeedback.length, 3);
-    assert.deepEqual([tracker.pushed, tracker.replies, tracker.resolved], [[], [], []]);
-    assert.ok(calls.includes(`discard ${branch}`));
-    assert.match(tracker.comments[0] ?? "", /Attempt budget \(3\)[\s\S]*raw\/issue\/7-fix-streak[\s\S]*error: three/);
-    assert.equal(calls.at(-1), "relabel #21: -ready-for-agent +ready-for-human");
-  });
-
-  test("a comment without a readable verdict spends an Attempt and is named in the feedback", async () => {
-    const { sut, agents, calls } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1"), thread("T2"), thread("T3")] },
-      revisions: { 21: { runs: [{ output: replies("C1 | fixed | Done.", "C2 | maybe | Hm.") }, {}] } },
-    });
-
-    const outcomes = await sut.run();
-
-    assert.equal(outcomes[0]?.kind, "revised");
-    assert.match(agents.revisionFeedback[1] ?? "", /no readable verdict for C2, C3\./);
-    assert.equal(testRuns(calls), 1);
-  });
-
-  test("a verdict written in backticks is read", async () => {
-    const { sut, tracker } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1")] },
-      revisions: { 21: { runs: [{ output: replies("C1 | `fixed` | Renamed.") }] } },
-    });
-
-    await sut.run();
-
-    assert.deepEqual(tracker.resolved, ["T1"]);
-  });
-
-  test("a verdict line dressed as a bullet, in bold or capitals is read", async () => {
-    const { sut, tracker } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1"), thread("T2")] },
-      revisions: { 21: { runs: [{ output: replies("- C1 | **Fixed** | Renamed.", "| C2 | declined | Stale. |") }] } },
-    });
-
-    await sut.run();
-
-    assert.deepEqual(tracker.replies.map((reply) => reply.body), ["<!-- afk-loop -->\n**fixed**: Renamed.", "<!-- afk-loop -->\n**declined**: Stale."]);
-    assert.deepEqual(tracker.resolved, ["T1"]);
-  });
-
-  test("a comment marked fixed after the run removed the merge of main spends an Attempt, as nothing would be pushed", async () => {
-    const { sut, tracker, agents } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1")] },
-      revisions: { 21: { mergedMain: true, runs: [{ commits: -1 }, { commits: 0 }, { commits: 0 }] } },
-    });
-
-    const outcomes = await sut.run();
-
-    assert.equal(outcomes[0]?.kind, "revision-handoff");
-    assert.equal(agents.revisionFeedback[1], fixedWithoutCommitFeedback);
-    assert.deepEqual(tracker.resolved, []);
-  });
-
-  test("a comment marked fixed without a commit spends an Attempt", async () => {
-    const { sut, agents } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1")] },
-      revisions: { 21: { runs: [{ commits: 0 }, {}] } },
-    });
-
-    const outcomes = await sut.run();
-
-    assert.equal(outcomes[0]?.kind, "revised");
-    assert.deepEqual(agents.revisionFeedback, [undefined, fixedWithoutCommitFeedback]);
-  });
-
-  test("a dirty worktree spends an Attempt and skips the Test run", async () => {
-    const { sut, agents, calls } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1")] },
-      revisions: { 21: { runs: [{ dirty: true }, {}] } },
-    });
-
-    await sut.run();
-
-    assert.deepEqual(agents.revisionFeedback, [undefined, dirtyFeedback]);
-    assert.equal(testRuns(calls), 1);
-  });
-
-  test("a rejected push discards the Revision's local work, so the next run isn't taken for hand work", async () => {
-    const { sut, tracker, calls } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7)],
-      reviewComments: { 21: [thread("T1")] },
-      pushFails: true,
-    });
-
-    const outcomes = await sut.run();
-
-    assert.deepEqual(outcomes, [{ issue: 7, kind: "error", message: "Error: push rejected" }]);
-    assert.equal(calls.at(-1), `discard ${branch}`);
-    assert.deepEqual(tracker.replies, []);
-  });
-
-  test("a stray label flip with no review comments doesn't count against the cap", async () => {
-    const { sut } = makeSUT({ issues: [issue(1)], revisionPullRequests: [pullRequest(21, 7)] });
-
-    const outcomes = await sut.run(1);
-
-    assert.deepEqual(outcomes.map((o) => o.kind), ["no-review-comments", "pull-request"]);
-  });
-
-  test("a Revision PR that stops qualifying mid-run is skipped silently", async () => {
-    const { sut, calls } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7), pullRequest(31, 9)],
-      reviewComments: { 21: [thread("T1")], 31: [thread("T2")] },
-      withdrawnAfterFirstRevision: [31],
-    });
-
-    const outcomes = await sut.run();
-
-    assert.deepEqual(outcomes.map((o) => o.issue), [7]);
-    assert.ok(!calls.some((call) => call.includes("#31")));
-  });
-
-  test("a Revision never relabels its issue", async () => {
-    const { sut, calls } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(21, 7), pullRequest(31, 9), pullRequest(41, 11)],
-      reviewComments: { 21: [thread("T1")], 31: [thread("T2")] },
-      revisions: { 31: { runs: [{ dirty: true }, { dirty: true }, { dirty: true }] } },
-    });
-
-    await sut.run();
-
-    assert.deepEqual(calls.filter((call) => call.startsWith("relabel")).map((call) => call.split(":")[0]), [
-      "relabel #21",
-      "relabel #31",
-      "relabel #41",
-    ]);
-  });
-});
-
 describe("runAfkLoop, PR body", () => {
-  test("the Drafter's draft sits between the Closes line and the Host's own lines", async () => {
-    const { sut, tracker } = makeSUT({ issues: [issue(1)], drafts: { 1: ["## Summary\n\nShows the Streak badge."] } });
+  test("the Reviewer's draft sits between the Closes line and the Host's own lines", async () => {
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { pullRequestDraft: "## Summary\n\nShows the Streak badge." }] } });
 
     await sut.run();
 
     assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #1\.\n\n## Summary\n\nShows the Streak badge\.\n\nImplemented by the AFK loop's Implementer/);
   });
 
-  test("the draft is written once, after the last Test run, from what it verified", async () => {
-    const { sut, agents } = makeSUT({
+  test("the draft is the one of the Reviewer's last run", async () => {
+    const { sut, tracker } = makeSUT({
       issues: [issue(1)],
-      runs: { 1: [{}, {}, {}] },
+      runs: { 1: [{}, { pullRequestDraft: "## Summary\n\nFirst." }, { pullRequestDraft: "## Summary\n\nLast." }] },
       testRunResults: [green, "error: boom", green],
-      drafts: { 1: ["## Summary"] },
     });
 
     await sut.run();
 
-    assert.deepEqual(agents.testRunsBeforeDraft, [3]);
-    assert.match(agents.draftTestRuns[0] ?? "", /^Verified: the Test run passed on the reviewed commit/);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #1\.\n\n## Summary\n\nLast\.\n\nImplemented by/);
   });
 
   test("a draft closes no issue of its own", async () => {
-    const { sut, tracker } = makeSUT({ issues: [issue(1)], drafts: { 1: ["Fixes #9 and closes: acme/Habitat#10. The dialog closes on Save."] } });
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { pullRequestDraft: "Fixes #9 and closes: acme/Habitat#10. The dialog closes on Save." }] } });
 
     await sut.run();
 
     assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #1\.\n\nRefs #9 and Refs: acme\/Habitat#10\. The dialog closes on Save\.\n\n/);
   });
 
-  test("a missing draft is asked for once more", async () => {
-    const { sut, tracker, agents } = makeSUT({ issues: [issue(1)], drafts: { 1: [undefined, "## Summary"] } });
-
-    await sut.run();
-
-    assert.equal(agents.draftTestRuns.length, 2);
-    assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #1\.\n\n## Summary\n\n/);
-  });
-
-  test("a Drafter run that fails counts as a missing draft", async () => {
-    const { sut, tracker } = makeSUT({ issues: [issue(1)], drafts: { 1: [new Error("agent crashed"), "## Summary"] } });
+  test("with no draft the PR still opens, the Host's own lines following the Closes line", async () => {
+    const { sut, tracker, calls } = makeSUT({ issues: [issue(1)] });
 
     const outcomes = await sut.run();
 
     assert.equal(outcomes[0]?.kind, "pull-request");
-    assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #1\.\n\n## Summary\n\n/);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #1\.\n\nImplemented by the AFK loop's Implementer/);
+    assert.deepEqual(calls.filter((call) => call === "implement" || call === "review"), ["implement", "review"]);
   });
+});
 
-  test("with no draft after two runs the Host's own lines follow the Closes line", async () => {
-    const { sut, tracker, agents } = makeSUT({ issues: [issue(1)] });
+describe("runAfkLoop, Open findings", () => {
+  const onLine: OpenFinding = { text: "The streak resets at UTC midnight.", at: { path: "web/src/streak.ts", line: 12 } };
+  const noLine: OpenFinding = { text: "No test covers a skipped day.\nAdd one?" };
+  const reviewerSays = "<!-- afk-loop -->\n**The AFK loop's Reviewer:**";
+
+  test("are posted as one review after the PR is opened: inline with a line, in the body without", async () => {
+    const { sut, tracker, calls } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { openFindings: [onLine, noLine] }] } });
+    const branch = "issue/1-issue-1";
 
     await sut.run();
 
-    assert.equal(agents.draftTestRuns.length, 2);
-    assert.match(tracker.pullRequests[0]?.body ?? "", /^Closes #1\.\n\nImplemented by the AFK loop's Implementer/);
+    assert.deepEqual(calls.slice(-3), [`open PR ${branch}`, "relabel #1: -ready-for-agent", `post review https://pr/${branch}`]);
+    assert.deepEqual(tracker.reviews, [
+      {
+        body: `${reviewerSays}\n\n- No test covers a skipped day.\n  Add one?`,
+        comments: [{ path: "web/src/streak.ts", line: 12, body: `${reviewerSays}\n\nThe streak resets at UTC midnight.` }],
+      },
+    ]);
   });
 
-  test("a Handoff drafts nothing", async () => {
-    const { sut, agents } = makeSUT({ issues: [issue(1)], testRunResults: ["error: boom", "error: boom", "error: boom"] });
+  test("all on a line: the review has no body", async () => {
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { openFindings: [onLine] }] } });
+
+    await sut.run();
+
+    assert.equal(tracker.reviews[0]?.body, "");
+    assert.equal(tracker.reviews[0]?.comments.length, 1);
+  });
+
+  test("none: no review is posted, and the PR body says so", async () => {
+    const { sut, tracker, calls } = makeSUT({ issues: [issue(1)] });
+
+    await sut.run();
+
+    assert.deepEqual(tracker.reviews, []);
+    assert.ok(!calls.some((call) => call.startsWith("post review")));
+    assert.match(tracker.pullRequests[0]?.body ?? "", /Its logs on the Host: `[^`\n]+`\. It left no Open finding\.\n\n/);
+  });
+
+  test("a rejected review is posted again with every finding in the body, each after its path and line", async () => {
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { openFindings: [onLine, noLine] }] }, rejectedReviews: 1 });
 
     const outcomes = await sut.run();
 
-    assert.equal(outcomes[0]?.kind, "handoff");
-    assert.equal(agents.draftTestRuns.length, 0);
+    assert.equal(outcomes[0]?.kind, "pull-request");
+    assert.equal(tracker.reviews.length, 2);
+    assert.deepEqual(tracker.reviews[1], {
+      body: `${reviewerSays}\n\n- \`web/src/streak.ts:12\`: The streak resets at UTC midnight.\n- No test covers a skipped day.\n  Add one?`,
+      comments: [],
+    });
+  });
+
+  test("a review rejected twice is an error, and the run stops", async () => {
+    const { sut, tracker, agents } = makeSUT({ issues: [issue(1), issue(2)], runs: { 1: [{}, { openFindings: [onLine] }] }, rejectedReviews: 2 });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes, [{ issue: 1, kind: "error", message: "Error: review rejected" }]);
+    assert.equal(tracker.reviews.length, 2);
+    assert.deepEqual(agents.startedIssues, [1]);
+  });
+
+  test("the PR body counts the findings posted and lists none of them", async () => {
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { openFindings: [onLine, noLine] }] } });
+
+    await sut.run();
+
+    const body = tracker.pullRequests[0]?.body ?? "";
+    assert.match(body, /Its logs on the Host: `[^`\n]+`\. It posted 2 Open findings as review comments on this PR\.\n\n/);
+    assert.ok(!body.includes("UTC midnight"));
+    assert.ok(!body.includes("skipped day"));
+  });
+
+  test("one finding is counted in the singular", async () => {
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { openFindings: [noLine] }] } });
+
+    await sut.run();
+
+    assert.match(tracker.pullRequests[0]?.body ?? "", /It posted 1 Open finding as review comments on this PR\./);
+  });
+
+  test("the review's findings are posted, not those of a run that fixed a failed Test run", async () => {
+    const { sut, tracker } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { openFindings: [noLine] }, {}] }, testRunResults: [green, "error: boom", green] });
+
+    await sut.run();
+
+    assert.equal(tracker.reviews.length, 1);
+    assert.match(tracker.pullRequests[0]?.body ?? "", /It posted 1 Open finding /);
   });
 });
 
@@ -903,34 +621,6 @@ describe("runAfkLoop, routing", () => {
     assert.equal(testRuns(calls), 0);
     assert.match(tracker.pullRequests[0]?.body ?? "", /\n\nNo Test run: the branch changes neither `web\/` nor `server\/`\.$/);
   });
-
-  test("a Revision's Test run covers the platforms its branch changes", async () => {
-    const { sut, testRunner } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(20, 7)],
-      reviewComments: { 20: [thread("T1")] },
-      revisions: { 20: { platforms: [server] } },
-    });
-
-    await sut.run();
-
-    assert.deepEqual(testRunner.platforms, [[server]]);
-  });
-
-  test("a Revision on a branch changing neither platform is pushed without a Test run", async () => {
-    const { sut, tracker, calls } = makeSUT({
-      issues: [],
-      revisionPullRequests: [pullRequest(20, 7)],
-      reviewComments: { 20: [thread("T1")] },
-      revisions: { 20: { platforms: [] } },
-    });
-
-    const outcomes = await sut.run();
-
-    assert.equal(outcomes[0]?.kind, "revised");
-    assert.equal(testRuns(calls), 0);
-    assert.deepEqual(tracker.pushed, ["issue/7-fix-streak"]);
-  });
 });
 
 describe("runAfkLoop, blocked issues", () => {
@@ -947,26 +637,14 @@ describe("runAfkLoop, blocked issues", () => {
 
 interface Fixture {
   issues: Issue[];
-  revisionPullRequests?: RevisionPullRequest[];
-  reviewComments?: Record<number, ReviewComment[]>;
-  revisions?: Record<number, RevisionFixture>;
-  withdrawnAfterFirstRevision?: number[];
   issuesWithOpenPullRequest?: number[];
   pushedBranches?: string[];
   localBranches?: Record<number, LocalBranch[]>;
   runs?: Record<number, Run[]>;
-  drafts?: Record<number, (string | Error | undefined)[]>;
   testRunResults?: (string | null)[];
   pushFails?: boolean;
+  rejectedReviews?: number;
   linkedIssues?: LinkedIssue[];
-  baseBranch?: string;
-}
-
-interface RevisionFixture {
-  start?: Exclude<RevisionStart, { kind: "session" }>;
-  mergedMain?: boolean;
-  platforms?: Platform[];
-  runs?: (Run & { output?: string })[];
 }
 
 interface Run {
@@ -974,8 +652,8 @@ interface Run {
   movesHead?: boolean;
   dirty?: boolean;
   platforms?: Platform[];
-  openFindings?: boolean;
-  unfixedFindings?: string;
+  openFindings?: OpenFinding[];
+  pullRequestDraft?: string;
   reply?: string;
 }
 
@@ -984,7 +662,7 @@ function makeSUT(fixture: Fixture) {
   const tracker = new SpyTracker(fixture, calls);
   const agents = new SpyAgents(fixture, calls);
   const testRunner = new SpyTestRunner(fixture.testRunResults ?? [], calls);
-  const sut = { run: (cap?: number) => runAfkLoop({ tracker, agents, testRunner, cap, baseBranch: fixture.baseBranch ?? "main", platforms: [web, server] }) };
+  const sut = { run: (cap?: number) => runAfkLoop({ tracker, agents, testRunner, cap, platforms: [web, server] }) };
   return { sut, tracker, agents, testRunner, calls };
 }
 
@@ -1005,31 +683,13 @@ function issue(number: number, overrides: Partial<Issue> = {}): Issue {
   return { number, title: `Issue ${number}`, body: "", labels: ["ready-for-agent"], openBlockers: 0, ...overrides };
 }
 
-function pullRequest(number: number, issueNumber: number): RevisionPullRequest {
-  return { number, branch: `issue/${issueNumber}-fix-streak`, issue: issue(issueNumber, { labels: [] }), revision: 1 };
-}
-
-function thread(id: string): ReviewComment {
-  return { kind: "inline", thread: id, author: "knn90", body: `Comment ${id}`, path: "Sources/Streak.swift", line: 12, diffHunk: "@@ -1 +1 @@", replies: [] };
-}
-
-function conversation(body: string): ReviewComment {
-  return { kind: "conversation", author: "knn90", body, replies: [] };
-}
-
-function replies(...lines: string[]): string {
-  return `Work done.\n\n<replies>\n${lines.join("\n")}\n</replies>`;
-}
-
 class SpyTracker implements Tracker {
   issues: Issue[];
   pushedBranches: string[];
   pushed: string[] = [];
   pullRequests: PullRequest[] = [];
+  reviews: PullRequestReview[] = [];
   comments: string[] = [];
-  replies: { thread: string; body: string }[] = [];
-  resolved: string[] = [];
-  private revisionQueue: RevisionPullRequest[];
 
   constructor(
     private readonly fixture: Fixture,
@@ -1037,29 +697,10 @@ class SpyTracker implements Tracker {
   ) {
     this.issues = fixture.issues;
     this.pushedBranches = [...(fixture.pushedBranches ?? [])];
-    this.revisionQueue = [...(fixture.revisionPullRequests ?? [])];
-  }
-
-  async revisionPullRequests() {
-    return this.revisionQueue;
   }
 
   async linkedIssues(numbers: readonly number[]) {
     return (this.fixture.linkedIssues ?? []).filter((linked) => numbers.includes(linked.number));
-  }
-
-  async reviewComments(pullRequest: number) {
-    return this.fixture.reviewComments?.[pullRequest] ?? [];
-  }
-
-  async replyInThread(thread: string, body: string) {
-    this.calls.push(`reply ${thread}`);
-    this.replies.push({ thread, body });
-  }
-
-  async resolveThread(thread: string) {
-    this.calls.push(`resolve ${thread}`);
-    this.resolved.push(thread);
   }
 
   async backlog(): Promise<Backlog> {
@@ -1083,6 +724,12 @@ class SpyTracker implements Tracker {
     return `https://pr/${pullRequest.branch}`;
   }
 
+  async postReview(pullRequest: string, review: PullRequestReview) {
+    this.calls.push(`post review ${pullRequest}`);
+    this.reviews.push(review);
+    if (this.reviews.length <= (this.fixture.rejectedReviews ?? 0)) throw new Error("review rejected");
+  }
+
   async comment(issueNumber: number, body: string) {
     this.calls.push(`comment on #${issueNumber}`);
     this.comments.push(body);
@@ -1090,8 +737,6 @@ class SpyTracker implements Tracker {
 
   async relabel(issueNumber: number, { remove, add }: Relabel) {
     this.calls.push(`relabel #${issueNumber}: -${remove}${add ? ` +${add}` : ""}`);
-    const withdrawn = this.fixture.withdrawnAfterFirstRevision ?? [];
-    this.revisionQueue = this.revisionQueue.filter((pr) => pr.number !== issueNumber && !withdrawn.includes(pr.number));
     this.issues = this.issues.map((i) =>
       i.number === issueNumber ? { ...i, labels: [...i.labels.filter((l) => l !== remove), ...(add ? [add] : [])] } : i,
     );
@@ -1103,10 +748,6 @@ class SpyAgents implements Agents {
   started: Issue[] = [];
   feedback: (string | undefined)[] = [];
   reviewFeedback: (string | undefined)[] = [];
-  revisionFeedback: (string | undefined)[] = [];
-  revisionComments: NumberedComment[][] = [];
-  draftTestRuns: string[] = [];
-  testRunsBeforeDraft: number[] = [];
   sandboxes: SandboxExec[] = [];
 
   constructor(
@@ -1122,43 +763,6 @@ class SpyAgents implements Agents {
     this.calls.push(`discard ${branch}`);
   }
 
-  async startRevision({ number, branch }: RevisionPullRequest, comments: readonly NumberedComment[]): Promise<RevisionStart> {
-    this.calls.push(`start revision ${branch}`);
-    this.revisionComments.push([...comments]);
-    const fixture = this.fixture.revisions?.[number] ?? {};
-    if (fixture.start) return fixture.start;
-    let runIndex = -1;
-    let commitsAhead = fixture.mergedMain ? 1 : 0;
-    let headVersion = 0;
-    const run = () => fixture.runs?.[runIndex] ?? {};
-    return {
-      kind: "session",
-      session: {
-        exec: this.openSandbox(),
-        revise: async (feedback) => {
-          this.calls.push("revise");
-          this.revisionFeedback.push(feedback);
-          runIndex += 1;
-          const commits = run().commits ?? 1;
-          commitsAhead += commits;
-          if (commits !== 0) headVersion += 1;
-          const allFixed = replies(...comments.map((comment) => `${comment.id} | fixed | Done.`));
-          return { output: run().output ?? allFixed, log: `logs/revision-${this.revisionFeedback.length}` };
-        },
-        inspect: async () => {
-          this.calls.push("inspect");
-          return { dirty: run().dirty ?? false, head: `head-${headVersion}`, commitsAhead, platforms: fixture.platforms ?? [web] };
-        },
-        close: async () => {
-          this.calls.push(`close ${branch}`);
-        },
-        discard: async () => {
-          this.calls.push(`discard ${branch}`);
-        },
-      },
-    };
-  }
-
   private openSandbox(): SandboxExec {
     const sandbox: SandboxExec = async () => ({ exitCode: 0, output: "" });
     this.sandboxes.push(sandbox);
@@ -1170,7 +774,6 @@ class SpyAgents implements Agents {
     this.startedIssues.push(issue.number);
     this.started.push(issue);
     const runs = this.fixture.runs?.[issue.number] ?? [];
-    const drafts = [...(this.fixture.drafts?.[issue.number] ?? [])];
     let runIndex = -1;
     let commitsAhead = 0;
     let headVersion = 0;
@@ -1193,15 +796,8 @@ class SpyAgents implements Agents {
         this.calls.push("review");
         this.reviewFeedback.push(feedback);
         agentRun();
-        const { openFindings = false, unfixedFindings } = run();
-        return { log: `logs/review-${this.reviewFeedback.length}`, openFindings, unfixedFindings };
-      },
-      draft: async (testRun) => {
-        this.draftTestRuns.push(testRun);
-        this.testRunsBeforeDraft.push(testRuns(this.calls));
-        const draft = drafts.shift();
-        if (draft instanceof Error) throw draft;
-        return draft;
+        const { openFindings = [], pullRequestDraft } = run();
+        return { log: `logs/review-${this.reviewFeedback.length}`, openFindings, pullRequestDraft };
       },
       inspect: async () => {
         this.calls.push("inspect");

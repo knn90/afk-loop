@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { Issue } from "./afk-loop.js";
 import type { Platform } from "./platforms.js";
-import { hasOpenFindings, reviewerPrompt, unfixedFindings } from "./reviewer-prompt.js";
+import { openFindings, pullRequestDraft, reviewerPrompt } from "./reviewer-prompt.js";
 
 describe("reviewerPrompt", () => {
   test("reads the glossary, and the glossary map when it exists", () => {
@@ -99,100 +99,146 @@ describe("reviewerPrompt", () => {
     assert.ok(prompt.indexOf("<host-feedback>\nerror: boom\n</host-feedback>") < prompt.indexOf("How to work:"));
     assert.match(prompt, /Done means[^\n]*every failure in <host-feedback> is fixed/);
   });
-  test("a review asks for the list of findings left unfixed", () => {
+
+  test("a review asks for each Open finding with its text and, where it has one, its path and line", () => {
     const sut = makeSUT();
 
     const prompt = sut.prompt();
 
-    assert.match(prompt, /List every finding you left unfixed[^\n]*`<unfixed-findings>`/);
+    assert.match(prompt, /Every finding you left unfixed is an Open finding: the maintainer must decide it\./);
+    assert.match(prompt, /between `<open-findings>` and `<\/open-findings>`[^\n]*`<finding path="path\/to\/file" line="12">[^\n]*<\/finding>`/);
+    assert.match(prompt, /a line on the new side of `git diff abc123\.\.\.HEAD`[^\n]*Leave both out when the finding has no single line/);
+    assert.match(prompt, /The Host posts each one as a review comment on the PR/);
   });
 
-  test("a review asks for the count of findings the maintainer must decide", () => {
+  test("a point the issue settles is not reported, and a real problem outside the issue's work is an Open finding", () => {
     const sut = makeSUT();
 
     const prompt = sut.prompt();
 
-    assert.match(prompt, /open when the maintainer must decide it[^\n]*the <issue> itself settles[^\n]*a later issue[^\n]*not open/);
-    assert.match(prompt, /End your reply with `<open-findings>N<\/open-findings>`, N being the number of open findings/);
+    assert.match(prompt, /A point the <issue>'s own text settles is not a finding: do not report it\. A real problem that is not this issue's work is an Open finding\./);
+  });
+
+  test("a review asks for no count of Open findings and no list for the PR body", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt();
+
+    assert.ok(!prompt.includes("<open-findings>N"));
+    assert.ok(!prompt.includes("unfixed-findings"));
   });
 });
 
 describe("reviewerPrompt, PR body", () => {
-  test("a review drafts no PR body: that is the Drafter's", () => {
+  test("a review drafts the PR body with the pr skill, after its fixes", () => {
     const sut = makeSUT();
 
     const prompt = sut.prompt();
 
-    assert.ok(!prompt.includes("pr-body"));
-    assert.match(prompt, /Done means every finding is fixed or answered, all committed/);
+    assert.match(prompt, /invoke the `mattpocock-skills:pr` skill with the Skill tool and draft the PR body for `git diff abc123\.\.\.HEAD`/);
+    assert.ok(prompt.indexOf("Fix every Spec, Standards and Design finding") < prompt.indexOf("`mattpocock-skills:pr` skill"));
+    assert.match(prompt, /Done means every finding is fixed or answered, the draft is in your reply between `<pr-body>` and `<\/pr-body>`, all committed/);
+  });
+
+  test("a run with host feedback drafts the PR body too", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt("error: boom");
+
+    assert.match(prompt, /`mattpocock-skills:pr` skill/);
+    assert.match(prompt, /Done means every failure in <host-feedback> is fixed, the draft is in your reply between `<pr-body>` and `<\/pr-body>`/);
+  });
+
+  test("the draft starts at the Summary and leaves the Closes line to the Host", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt();
+
+    assert.match(prompt, /The draft starts at `## Summary` and names other issues as `Refs #n`\. The Host puts `Closes #7\.` above it/);
+  });
+
+  test("Evidence is output the Reviewer ran itself, the Test run result being the Host's to add", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt();
+
+    assert.match(prompt, /Evidence: quote only output of commands you run in this Sandbox\. The Host adds what the Test run verified\./);
   });
 });
 
-describe("unfixedFindings", () => {
-  test("a reply listing findings gives the list", () => {
+describe("pullRequestDraft", () => {
+  test("a reply with a draft gives the draft", () => {
     const sut = makeSUT();
 
-    const unfixed = sut.unfixedFindings("Done.\n<unfixed-findings>\n- Stock theme: belongs to #231.\n</unfixed-findings>\n<open-findings>0</open-findings>");
+    const draft = sut.pullRequestDraft("Done.\n<pr-body>\n## Summary\n\nShows the Streak badge.\n</pr-body>\n<promise>COMPLETE</promise>");
 
-    assert.equal(unfixed, "- Stock theme: belongs to #231.");
+    assert.equal(draft, "## Summary\n\nShows the Streak badge.");
   });
 
-  test("a reply with no list gives none", () => {
+  test("a reply with no draft gives none", () => {
     const sut = makeSUT();
 
-    const unfixed = sut.unfixedFindings("All fixed.\n<open-findings>0</open-findings>");
+    const draft = sut.pullRequestDraft("Done.");
 
-    assert.equal(unfixed, undefined);
+    assert.equal(draft, undefined);
   });
 
-  test("an empty list gives none", () => {
+  test("the last draft in the reply is the one given", () => {
     const sut = makeSUT();
 
-    const unfixed = sut.unfixedFindings("<unfixed-findings>\n</unfixed-findings>");
+    const draft = sut.pullRequestDraft("I put it in `<pr-body>…</pr-body>`.\n<pr-body>## Summary</pr-body>");
 
-    assert.equal(unfixed, undefined);
+    assert.equal(draft, "## Summary");
   });
 
-  test("the last list in the reply is the one given", () => {
+  test("an unclosed mention before the draft stays out of it", () => {
     const sut = makeSUT();
 
-    const unfixed = sut.unfixedFindings("I list them in `<unfixed-findings>…</unfixed-findings>`.\n<unfixed-findings>- One.</unfixed-findings>");
+    const draft = sut.pullRequestDraft("The draft goes after `<pr-body>`.\n<pr-body>## Summary</pr-body>");
 
-    assert.equal(unfixed, "- One.");
+    assert.equal(draft, "## Summary");
   });
 });
 
-describe("hasOpenFindings", () => {
-  test("a reply counting zero has none", () => {
+describe("openFindings", () => {
+  test("a finding with a path and a line is read with both", () => {
     const sut = makeSUT();
 
-    const open = sut.hasOpenFindings("All fixed.\n<open-findings>0</open-findings>\n<promise>COMPLETE</promise>");
+    const findings = sut.openFindings('Done.\n<open-findings>\n<finding path="web/src/streak.ts" line="12">The streak resets at UTC midnight.</finding>\n</open-findings>');
 
-    assert.equal(open, false);
+    assert.deepEqual(findings, [{ text: "The streak resets at UTC midnight.", at: { path: "web/src/streak.ts", line: 12 } }]);
   });
 
-  test("a reply counting some has open findings", () => {
+  test("a finding with no line is read as its text alone", () => {
     const sut = makeSUT();
 
-    const open = sut.hasOpenFindings("Declined one.\n<open-findings>1</open-findings>");
+    const findings = sut.openFindings('<open-findings>\n<finding>No test covers a\nskipped day.</finding>\n<finding path="web/src/streak.ts">Shallow module.</finding>\n</open-findings>');
 
-    assert.equal(open, true);
+    assert.deepEqual(findings, [{ text: "No test covers a\nskipped day." }, { text: "Shallow module." }]);
   });
 
-  test("a reply giving no count has open findings", () => {
+  test("a reply with no block has none", () => {
     const sut = makeSUT();
 
-    const open = sut.hasOpenFindings("Done.");
+    const findings = sut.openFindings("All fixed.\n<promise>COMPLETE</promise>");
 
-    assert.equal(open, true);
+    assert.deepEqual(findings, []);
   });
 
-  test("the last count in the reply decides", () => {
+  test("an empty block has none", () => {
     const sut = makeSUT();
 
-    const open = sut.hasOpenFindings("I end with `<open-findings>0</open-findings>` when clean.\n<open-findings>2</open-findings>");
+    const findings = sut.openFindings("<open-findings>\n</open-findings>");
 
-    assert.equal(open, true);
+    assert.deepEqual(findings, []);
+  });
+
+  test("the last block in the reply is the one read", () => {
+    const sut = makeSUT();
+
+    const findings = sut.openFindings("I list them in `<open-findings><finding>…</finding></open-findings>`.\n<open-findings><finding>One.</finding></open-findings>");
+
+    assert.deepEqual(findings, [{ text: "One." }]);
   });
 });
 
@@ -207,8 +253,8 @@ const project = { repo: "acme/Habitat", platforms: [platform("web"), platform("s
 function makeSUT(standards = ["Prefer value types."]) {
   const issue: Issue = { number: 7, title: "Fix streak", body: "Body", labels: [], openBlockers: 0 };
   return {
-    hasOpenFindings,
-    unfixedFindings,
+    openFindings,
+    pullRequestDraft,
     prompt: (feedback?: string) =>
       reviewerPrompt({ project, issue, branch: "issue/7-fix-streak", base: "abc123", standards, feedback }),
   };

@@ -1,8 +1,8 @@
-import { issueNumberOf, type Issue, type LinkedIssue, type RevisionPullRequest, type Tracker } from "./afk-loop.js";
-import { gh, lines, repoUrl, type Host } from "./host.js";
+import type { Issue, LinkedIssue, Tracker } from "./afk-loop.js";
+import { gh, ghWithInput, lines, repoUrl, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
 import { readyForAgent } from "./loop-rules.js";
-import { hasWriteAccess, isLoopComment, openReviewComments, revisionNumber, type AuthoredComment } from "./review-comments.js";
+import { hasWriteAccess, isLoopComment } from "./review-comments.js";
 
 interface RestIssue {
   number: number;
@@ -52,72 +52,6 @@ function linkedIssue(repo: string, number: number): LinkedIssue[] {
   }
 }
 
-function graphql<Data>(query: string, variables: Record<string, string | number>): Data {
-  const fields = Object.entries(variables).flatMap(([key, value]) => [typeof value === "number" ? "-F" : "-f", `${key}=${value}`]);
-  return JSON.parse(gh("api", "graphql", "-f", `query=${query}`, ...fields)).data;
-}
-
-const revisionPullRequestsQuery = `query($owner: String!, $name: String!, $label: String!) {
-  repository(owner: $owner, name: $name) {
-    pullRequests(states: OPEN, labels: [$label], first: 50, orderBy: { field: CREATED_AT, direction: ASC }) {
-      nodes { number headRefName isCrossRepository comments(last: 100) { nodes { authorAssociation body } } }
-    }
-  }
-}`;
-
-const authored = "author { login } authorAssociation body";
-
-const reviewCommentsQuery = `query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      reviewThreads(first: 100) { nodes { id isResolved path line comments(first: 50) { nodes { ${authored} diffHunk } } } }
-      comments(last: 100) { nodes { ${authored} at: createdAt } }
-      reviews(last: 100) { nodes { ${authored} at: submittedAt } }
-    }
-  }
-}`;
-
-interface Nodes<Node> {
-  nodes: Node[];
-}
-
-interface RevisionPullRequestsData {
-  repository: { pullRequests: Nodes<{ number: number; headRefName: string; isCrossRepository: boolean; comments: Nodes<{ authorAssociation: string; body: string }> }> };
-}
-
-interface ReviewCommentsData {
-  repository: {
-    pullRequest: {
-      reviewThreads: Nodes<{
-        id: string;
-        isResolved: boolean;
-        path: string;
-        line: number | null;
-        comments: Nodes<AuthoredComment & { diffHunk: string }>;
-      }>;
-      comments: Nodes<AuthoredComment>;
-      reviews: Nodes<AuthoredComment>;
-    };
-  };
-}
-
-function ownerAndName(repo: string): { owner: string; name: string } {
-  const [owner, name] = repo.split("/") as [string, string];
-  return { owner, name };
-}
-
-function revisionPullRequests(repo: string): RevisionPullRequest[] {
-  const data = graphql<RevisionPullRequestsData>(revisionPullRequestsQuery, { ...ownerAndName(repo), label: readyForAgent });
-  const ownBranch = data.repository.pullRequests.nodes.filter((pullRequest) => !pullRequest.isCrossRepository);
-  const issues = ownBranch.length > 0 ? openIssues(repo) : [];
-  return ownBranch.flatMap((pullRequest) => {
-    const issueNumber = issueNumberOf(pullRequest.headRefName);
-    const issue = issues.find((issue) => issue.number === issueNumber);
-    if (!issue) return [];
-    return [{ number: pullRequest.number, branch: pullRequest.headRefName, issue, revision: revisionNumber(pullRequest.comments.nodes) }];
-  });
-}
-
 function issuesWithOpenPullRequest(repo: string): number[] {
   const pullRequests: { closingIssuesReferences: { number: number }[] }[] = JSON.parse(
     gh("pr", "list", "-R", repo, "--state", "open", "--limit", "200", "--json", "closingIssuesReferences"),
@@ -135,32 +69,8 @@ export function githubTracker({ repo, baseBranch }: Loop, host: Host): Tracker {
       return { issues: openIssues(repo, `&labels=${readyForAgent}`), issuesWithOpenPullRequest: issuesWithOpenPullRequest(repo), pushedBranches: pushedBranches(repo) };
     },
 
-    async revisionPullRequests() {
-      return revisionPullRequests(repo);
-    },
-
     async linkedIssues(numbers) {
       return numbers.flatMap((number) => linkedIssue(repo, number));
-    },
-
-    async reviewComments(pullRequest) {
-      const { reviewThreads, comments, reviews } = graphql<ReviewCommentsData>(reviewCommentsQuery, { ...ownerAndName(repo), number: pullRequest }).repository.pullRequest;
-      return openReviewComments({
-        threads: reviewThreads.nodes.map((thread) => ({ ...thread, diffHunk: thread.comments.nodes[0]?.diffHunk ?? "", comments: thread.comments.nodes })),
-        comments: comments.nodes,
-        reviews: reviews.nodes,
-      });
-    },
-
-    async replyInThread(thread, body) {
-      graphql(
-        `mutation($thread: ID!, $body: String!) { addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $thread, body: $body }) { comment { id } } }`,
-        { thread, body },
-      );
-    },
-
-    async resolveThread(thread) {
-      graphql(`mutation($thread: ID!) { resolveReviewThread(input: { threadId: $thread }) { thread { id } } }`, { thread });
     },
 
     async pushBranch(branch) {
@@ -169,6 +79,11 @@ export function githubTracker({ repo, baseBranch }: Loop, host: Host): Tracker {
 
     async openPullRequest({ branch, title, body, label }) {
       return gh("pr", "create", "-R", repo, "--base", baseBranch, "--head", branch, "--title", title, "--body", body, "--label", label).trim();
+    },
+
+    async postReview(pullRequest, { body, comments }) {
+      const review = { event: "COMMENT", body, comments: comments.map(({ path, line, body }) => ({ path, line, side: "RIGHT", body })) };
+      ghWithInput(JSON.stringify(review), "api", "--method", "POST", `repos/${repo}/pulls/${pullRequest.split("/").at(-1)}/reviews`, "--input", "-");
     },
 
     async comment(issueOrPullRequest, body) {
