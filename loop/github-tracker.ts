@@ -37,16 +37,19 @@ interface RestComment {
   author_association: string;
 }
 
+function issueComments(repo: string, number: number): string[] {
+  const pages: RestComment[][] = JSON.parse(gh("api", "--paginate", "--slurp", `repos/${repo}/issues/${number}/comments?per_page=100`));
+  return pages
+    .flat()
+    .map((comment) => ({ authorAssociation: comment.author_association, body: comment.body ?? "" }))
+    .filter((comment) => hasWriteAccess(comment) && !isLoopComment(comment))
+    .map((comment) => comment.body);
+}
+
 function linkedIssue(repo: string, number: number): LinkedIssue[] {
   try {
     const issue: RestIssue = JSON.parse(gh("api", `repos/${repo}/issues/${number}`));
-    const pages: RestComment[][] = JSON.parse(gh("api", "--paginate", "--slurp", `repos/${repo}/issues/${number}/comments?per_page=100`));
-    const comments = pages
-      .flat()
-      .map((comment) => ({ authorAssociation: comment.author_association, body: comment.body ?? "" }))
-      .filter((comment) => hasWriteAccess(comment) && !isLoopComment(comment))
-      .map((comment) => comment.body);
-    return [{ number, title: issue.title, body: issue.body ?? "", comments }];
+    return [{ number, title: issue.title, body: issue.body ?? "", comments: issueComments(repo, number) }];
   } catch {
     return [];
   }
@@ -67,6 +70,10 @@ export function githubTracker({ repo, baseBranch }: Loop, host: Host): Tracker {
   return {
     async backlog() {
       return { issues: openIssues(repo, `&labels=${readyForAgent}`), issuesWithOpenPullRequest: issuesWithOpenPullRequest(repo), pushedBranches: pushedBranches(repo) };
+    },
+
+    async issueComments(issueNumber) {
+      return issueComments(repo, issueNumber);
     },
 
     async linkedIssues(numbers) {

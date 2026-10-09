@@ -4,7 +4,7 @@ import { claudeCode, createSandbox } from "@ai-hero/sandcastle";
 import { issueBranchPrefix, type Agents, type Session, type WorktreeState } from "./afk-loop.js";
 import { branchFileName, check, lines, logsDir, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
-import { findingsLeft, implementerPrompt } from "./implementer-prompt.js";
+import { contradiction, findingsLeft, implementerPrompt } from "./implementer-prompt.js";
 import { platformsChanged, type Platform } from "./platforms.js";
 import { completionSignal } from "./prompt-parts.js";
 import { answeredOpenFindings, firstReview, pullRequestDraft, reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
@@ -188,7 +188,7 @@ export function sandcastleAgents(loop: Loop, host: Host): Agents {
         exec: sandbox.exec,
         async implement(feedback, fixableFindings) {
           const run = await runAgent("Implementer", implementerPrompt(loop, issue, branch, feedback, fixableFindings));
-          return { reply: run.output, log: run.log, findingsLeft: findingsLeft(run.output) };
+          return { reply: run.output, log: run.log, findingsLeft: findingsLeft(run.output), contradiction: contradiction(run.output) };
         },
         async review() {
           const run = await runAgent("Reviewer", reviewerPrompt({ project: loop, issue, branch, base, standards: await standards() }));

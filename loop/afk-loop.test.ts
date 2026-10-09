@@ -73,6 +73,49 @@ describe("runAfkLoop", () => {
     assert.deepEqual(agents.started[0]?.linkedIssues, [verified]);
   });
 
+  test("an issue is started with its comments", async () => {
+    const { sut, agents } = makeSUT({ issues: [issue(1)], comments: { 1: ["Use the weekly streak.", "Weeks start on Monday."] } });
+
+    await sut.run();
+
+    assert.deepEqual(agents.started[0]?.comments, ["Use the weekly streak.", "Weeks start on Monday."]);
+  });
+
+  test("an issue named in a comment is a Linked issue, except under the comment's Parent and Blocked by headings", async () => {
+    const linked = (number: number) => ({ number, title: `Issue ${number}`, body: "", comments: [] });
+    const { sut, agents } = makeSUT({
+      issues: [issue(1, { body: "## Blocked by\n\n- #229" })],
+      comments: { 1: ["## Parent\n\n#226", "Not the receiver of #250; #229 has the stream."] },
+      linkedIssues: [226, 229, 250].map(linked),
+    });
+
+    await sut.run();
+
+    assert.deepEqual(agents.started[0]?.linkedIssues, [229, 250].map(linked));
+  });
+
+  test("the body and the comments share one limit of Linked issues, the body's first", async () => {
+    const linked = (number: number) => ({ number, title: `Issue ${number}`, body: "", comments: [] });
+    const { sut, agents } = makeSUT({
+      issues: [issue(1, { body: "#11 #12 #13" })],
+      comments: { 1: ["#14 #15", "#16"] },
+      linkedIssues: [16, 15, 14, 13, 12, 11].map(linked),
+    });
+
+    await sut.run();
+
+    assert.deepEqual(agents.started[0]?.linkedIssues?.map((issue) => issue.number).sort(), [11, 12, 13, 14, 15]);
+  });
+
+  test("an issue whose comments cannot be read is not worked, and the run stops", async () => {
+    const { sut, agents } = makeSUT({ issues: [issue(1), issue(2)], comments: { 1: "unreadable" } });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes, [{ issue: 1, kind: "error", message: "Error: comments unreadable" }]);
+    assert.deepEqual(agents.startedIssues, []);
+  });
+
   test("a green Attempt is reviewed once, then pushed as a ready-for-human PR closing the issue", async () => {
     const { sut, tracker, calls } = makeSUT({ issues: [issue(12, { title: "[#9] - AFK loop tracer: pick issue → PR" })] });
     const branch = "issue/12-afk-loop-tracer-pick";
@@ -131,7 +174,7 @@ describe("runAfkLoop", () => {
     assert.deepEqual(calls.slice(0, 6), [`start ${branch}`, "implement", "inspect", `close ${branch}`, "relabel #1: -ready-for-agent +ready-for-human", "comment on #1"]);
     assert.deepEqual(tracker.comments, [
       [
-        "Handed off to a human: the Implementer made no commits.",
+        "<!-- afk-loop -->\nHanded off to a human: the Implementer made no commits.",
         "The Implementer's last reply (its log on the Host: `logs/implementer-1`):\n\n```text\nIssue 1 is already done.\n```",
         "Nothing is pushed. What the session left, if anything, is on the Host: on the local branch `issue/1-issue-1`, or uncommitted in its worktree.",
         "To requeue for the loop: remove the local `issue/1-issue-1` branch and its worktree, if they are still there, then relabel the issue `ready-for-agent`.",
@@ -144,6 +187,47 @@ describe("runAfkLoop", () => {
     assert.deepEqual(agents.startedIssues, [1, 2]);
     assert.deepEqual(tracker.pushed, ["issue/2-issue-2"]);
     assert.deepEqual(tracker.pullRequests.map((pr) => pr.branch), ["issue/2-issue-2"]);
+  });
+
+  test("a Contradiction the Implementer reports is a Handoff, even with commits: no Test run, nothing pushed, and the loop moves on", async () => {
+    const contradiction = "The body says the streak is daily.\nThe comment says it is weekly.";
+    const { sut, tracker, calls } = makeSUT({ issues: [issue(1), issue(2)], runs: { 1: [{ commits: 2, contradiction }] } });
+    const branch = "issue/1-issue-1";
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes[0], { issue: 1, kind: "handoff", branch, reason: "contradiction", contradiction, implementerLog: "logs/implementer-1" });
+    assert.deepEqual(calls.slice(0, 5), [`start ${branch}`, "implement", `close ${branch}`, "relabel #1: -ready-for-agent +ready-for-human", "comment on #1"]);
+    assert.deepEqual(tracker.comments, [
+      [
+        "<!-- afk-loop -->\nHanded off to a human: the Implementer found a Contradiction in the issue.",
+        "The parts that disagree, as the Implementer gave them (its log on the Host: `logs/implementer-1`):\n\n```text\nThe body says the streak is daily.\nThe comment says it is weekly.\n```",
+        "Nothing is pushed. What the session left, if anything, is on the Host: on the local branch `issue/1-issue-1`, or uncommitted in its worktree.",
+        "To requeue for the loop: add a comment on this issue saying which part holds, remove the local `issue/1-issue-1` branch and its worktree, if they are still there, then relabel the issue `ready-for-agent`.",
+      ].join("\n\n"),
+    ]);
+    assert.deepEqual(outcomes.map((o) => [o.issue, o.kind]), [
+      [1, "handoff"],
+      [2, "pull-request"],
+    ]);
+    assert.deepEqual(tracker.pushed, ["issue/2-issue-2"]);
+  });
+
+  test("a Contradiction reported after a failed Attempt is a Handoff for the Contradiction", async () => {
+    const { sut, calls } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { contradiction: "Daily or weekly." }] }, testRunResults: ["error: boom"] });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes.map((o) => o.kind === "handoff" && o.reason), ["contradiction"]);
+    assert.equal(testRuns(calls), 1);
+  });
+
+  test("a Contradiction reported in the Fix round is no Handoff: the PR opens", async () => {
+    const { sut } = makeSUT({ issues: [issue(1)], runs: { 1: [{}, { commits: 0, fixableFindings: "Rename it." }, { contradiction: "Daily or weekly." }, { commits: 0 }] } });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes.map((o) => o.kind), ["pull-request"]);
   });
 
   test("an Implementer that undoes its uncommitted changes and makes no commits hands off without spending the rest of the budget", async () => {
@@ -202,7 +286,7 @@ describe("runAfkLoop", () => {
     assert.deepEqual(tracker.pullRequests, []);
     assert.deepEqual(tracker.comments, [
       [
-        "Handed off to a human: the Attempt budget (3) ran out without a green Test run.",
+        "<!-- afk-loop -->\nHanded off to a human: the Attempt budget (3) ran out without a green Test run.",
         "Feedback from the last Attempt (Test run output filtered; raw log on the Host: `raw/issue/1-issue-1`):\n\n```text\nerror: three\n```",
         "Nothing is pushed. What the session left, if anything, is on the Host: on the local branch `issue/1-issue-1`, or uncommitted in its worktree.",
         "To requeue for the loop: remove the local `issue/1-issue-1` branch and its worktree, if they are still there, then relabel the issue `ready-for-agent`.",
@@ -224,7 +308,7 @@ describe("runAfkLoop", () => {
     assert.deepEqual(calls.slice(-2), ["relabel #1: -ready-for-agent +ready-for-human", "comment on #1"]);
     assert.deepEqual(tracker.comments, [
       [
-        "Handed off to a human: the Attempt budget (3) ran out without a green Test run.",
+        "<!-- afk-loop -->\nHanded off to a human: the Attempt budget (3) ran out without a green Test run.",
         `Feedback from the last Attempt:\n\n\`\`\`text\n${dirtyFeedback}\n\`\`\``,
         "Nothing is pushed. What the session left, if anything, is on the Host: on the local branch `issue/1-issue-1`, or uncommitted in its worktree.",
         "To requeue for the loop: remove the local `issue/1-issue-1` branch and its worktree, if they are still there, then relabel the issue `ready-for-agent`.",
@@ -881,6 +965,7 @@ interface Fixture {
   pushFails?: boolean;
   rejectedReviews?: number;
   linkedIssues?: LinkedIssue[];
+  comments?: Record<number, string[] | "unreadable">;
 }
 
 interface Run {
@@ -893,6 +978,7 @@ interface Run {
   pullRequestDraft?: string;
   reply?: string;
   findingsLeft?: string;
+  contradiction?: string;
   noOpenFindingsBlock?: true;
   unreadable?: true;
 }
@@ -937,6 +1023,12 @@ class SpyTracker implements Tracker {
   ) {
     this.issues = fixture.issues;
     this.pushedBranches = [...(fixture.pushedBranches ?? [])];
+  }
+
+  async issueComments(issueNumber: number) {
+    const comments = this.fixture.comments?.[issueNumber] ?? [];
+    if (comments === "unreadable") throw new Error("comments unreadable");
+    return comments;
   }
 
   async linkedIssues(numbers: readonly number[]) {
@@ -1040,8 +1132,8 @@ class SpyAgents implements Agents {
         this.feedback.push(feedback);
         this.fixing.push(fixableFindings);
         agentRun();
-        const { reply = "", findingsLeft } = run();
-        return { reply, log: `logs/implementer-${this.feedback.length}`, ...(findingsLeft ? { findingsLeft } : {}) };
+        const { reply = "", findingsLeft, contradiction } = run();
+        return { reply, log: `logs/implementer-${this.feedback.length}`, ...(findingsLeft ? { findingsLeft } : {}), ...(contradiction ? { contradiction } : {}) };
       },
       review: async () => {
         this.calls.push("review");

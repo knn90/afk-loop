@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { Issue, LinkedIssue } from "./afk-loop.js";
 import type { Platform } from "./platforms.js";
-import { findingsLeft, implementerPrompt } from "./implementer-prompt.js";
+import { contradiction, findingsLeft, implementerPrompt } from "./implementer-prompt.js";
 import type { Project } from "./loop-config.js";
+import { issueCommentsCharLimit } from "./prompt-parts.js";
 
 describe("implementerPrompt", () => {
   test("reads the glossary, and the glossary map when it exists", () => {
@@ -31,13 +32,82 @@ describe("implementerPrompt", () => {
     assert.match(prompt, /<\/issue>\n\n<linked-issue number="224">\n# Verify the stack\n\nCatalog\n<\/linked-issue>/);
   });
 
+  test("an issue's comments follow its body inside the issue, one block each in posting order", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.commented(["Use the weekly streak.", "Weeks start on Monday."]);
+
+    assert.ok(prompt.includes("<issue>\n# Fix streak\n\nBody\n\n<comment>\nUse the weekly streak.\n</comment>\n\n<comment>\nWeeks start on Monday.\n</comment>\n</issue>"));
+  });
+
+  test("an issue with no comment is its title and body", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.commented([]);
+
+    assert.ok(prompt.includes("<issue>\n# Fix streak\n\nBody\n</issue>"));
+  });
+
+  test("comments past the limit are cut from the oldest end, with the truncation mark where the cut is", () => {
+    const sut = makeSUT();
+    const older = "a".repeat(issueCommentsCharLimit - 5_000);
+    const newer = "b".repeat(10_000);
+
+    const prompt = sut.commented([older, newer]);
+
+    assert.ok(prompt.includes(`Body\n\n… truncated\n\n<comment>\n${"a".repeat(10_000)}\n</comment>\n\n<comment>\n${newer}\n</comment>\n</issue>`));
+  });
+
+  test("a comment the limit leaves nothing of is left out", () => {
+    const sut = makeSUT();
+    const newest = "b".repeat(issueCommentsCharLimit);
+
+    const prompt = sut.commented(["Use the daily streak.", newest]);
+
+    assert.ok(prompt.includes(`Body\n\n… truncated\n\n<comment>\n${newest}\n</comment>\n</issue>`));
+    assert.ok(!prompt.includes("Use the daily streak."));
+  });
+
+  test("the limit never cuts the body", () => {
+    const sut = makeSUT();
+    const body = "x".repeat(issueCommentsCharLimit * 2);
+
+    const prompt = sut.commented(["Use the weekly streak."], body);
+
+    assert.ok(prompt.includes(`${body}\n\n<comment>\nUse the weekly streak.\n</comment>\n</issue>`));
+    assert.ok(!prompt.includes("truncated"));
+  });
+
+  test("a comment that says which part holds is followed, and a Contradiction stops the work before any code", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt();
+
+    assert.ok(
+      prompt.includes(
+        "How to work:\n\n- First read the <issue> as one text: its body, then its <comment> blocks in posting order. Where a comment says which part holds, follow the comment. Two parts that disagree, with nothing saying which holds, are a Contradiction: write no code, commit nothing, and quote both parts in the <contradiction> block. The Host returns the issue to the maintainer.\n",
+      ),
+    );
+  });
+
+  test("the first round ends on the Contradiction block, empty when the issue has none", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt();
+
+    assert.ok(
+      prompt.endsWith(
+        "all committed, and `git status` is clean; or, on a Contradiction, nothing is committed and both parts are in the <contradiction> block. End your reply with this block, once, then <promise>COMPLETE</promise>. An empty block means the issue has no Contradiction. Write its tags nowhere else in your reply.\n\n<contradiction>\n</contradiction>",
+      ),
+    );
+  });
+
   test("the issue is worked through the tdd skill", () => {
     const sut = makeSUT();
 
     const prompt = sut.prompt();
 
     assert.match(prompt, /Invoke the `mattpocock-skills:tdd` skill with the Skill tool and work the issue test-first with it: for each behaviour the issue asks for, a test/);
-    assert.ok(prompt.endsWith("all committed, and `git status` is clean. Then reply with <promise>COMPLETE</promise>."));
   });
 
   test("names every platform's coding standards, to follow by the folder changed", () => {
@@ -131,6 +201,15 @@ describe("implementerPrompt, Fix round", () => {
     assert.ok(!prompt.includes("every acceptance criterion"));
   });
 
+  test("the Fix round carries the issue's comments, and asks for no Contradiction", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.fix("web/src/streak.ts:12: rename `x`.", undefined, ["Use the weekly streak."]);
+
+    assert.ok(prompt.includes("Body\n\n<comment>\nUse the weekly streak.\n</comment>\n</issue>"));
+    assert.ok(!/contradiction/i.test(prompt));
+  });
+
   test("a rejected run in the Fix round follows the findings, and its fix is part of done", () => {
     const sut = makeSUT();
 
@@ -150,6 +229,17 @@ describe("implementerPrompt, Fix round", () => {
 
     assert.ok(!sut.prompt().includes("findings-left"));
     assert.ok(!sut.prompt("error: boom").includes("findings-left"));
+  });
+});
+
+describe("contradiction", () => {
+  test("a reply with the block gives its text", () => {
+    assert.equal(contradiction("Stopped.\n<contradiction>\nThe body says daily. The comment says weekly.\n</contradiction>\n<promise>COMPLETE</promise>"), "The body says daily. The comment says weekly.");
+  });
+
+  test("an empty block or a missing one gives none", () => {
+    assert.equal(contradiction("Done.\n<contradiction>\n</contradiction>\n<promise>COMPLETE</promise>"), undefined);
+    assert.equal(contradiction("Done."), undefined);
   });
 });
 
@@ -181,6 +271,7 @@ function makeSUT() {
   const issue: Issue = { number: 7, title: "Fix streak", body: "Body", labels: [], openBlockers: 0 };
   return {
     prompt: (feedback?: string, linkedIssues?: LinkedIssue[], forProject: Project = project) => implementerPrompt(forProject, { ...issue, linkedIssues }, "issue/7-fix-streak", feedback),
-    fix: (fixableFindings: string, feedback?: string) => implementerPrompt(project, issue, "issue/7-fix-streak", feedback, fixableFindings),
+    commented: (comments: string[], body = issue.body) => implementerPrompt(project, { ...issue, body, comments }, "issue/7-fix-streak"),
+    fix: (fixableFindings: string, feedback?: string, comments: string[] = []) => implementerPrompt(project, { ...issue, comments }, "issue/7-fix-streak", feedback, fixableFindings),
   };
 }

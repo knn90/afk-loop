@@ -3,6 +3,7 @@ import {
   budgetSpentWhy,
   dirtyFeedback,
   fenced,
+  handedOff,
   lastAttemptDetails,
   loopMarker,
   readyForAgent,
@@ -18,6 +19,7 @@ export interface Issue {
   readonly body: string;
   readonly labels: readonly string[];
   readonly openBlockers: number;
+  readonly comments?: readonly string[];
   readonly linkedIssues?: readonly LinkedIssue[];
 }
 
@@ -57,6 +59,7 @@ export interface Relabel {
 
 export interface Tracker {
   backlog(): Promise<Backlog>;
+  issueComments(issueNumber: number): Promise<string[]>;
   linkedIssues(numbers: readonly number[]): Promise<LinkedIssue[]>;
   pushBranch(branch: string): Promise<void>;
   openPullRequest(pullRequest: PullRequest): Promise<string>;
@@ -101,6 +104,7 @@ export interface ImplementerRun {
   readonly reply: string;
   readonly log: string;
   readonly findingsLeft?: string;
+  readonly contradiction?: string;
 }
 
 export interface Review {
@@ -146,6 +150,7 @@ export type HandoffOutcome = {
 } & (
   | { readonly reason: "attempt-budget"; readonly log: string; readonly rawLog?: string }
   | { readonly reason: "no-commits"; readonly lastReply: string; readonly implementerLog: string }
+  | { readonly reason: "contradiction"; readonly contradiction: string; readonly implementerLog: string }
 );
 
 export interface ReviewedOutcome {
@@ -194,7 +199,7 @@ export async function runAfkLoop(loop: AfkLoopOptions): Promise<Outcome[]> {
   while (worked() < cap) {
     const issue = nextEligibleIssue(await loop.tracker.backlog(), outcomes);
     if (!issue) break;
-    const working = withLinkedIssues(issue, loop.tracker).then((briefed) => work(briefed, loop));
+    const working = briefed(issue, loop.tracker).then((issue) => work(issue, loop));
     const outcome = await working.catch((error: unknown): Outcome => ({ issue: issue.number, kind: "error", message: String(error) }));
     outcomes.push(outcome);
     if (outcome.kind === "error") break;
@@ -202,9 +207,10 @@ export async function runAfkLoop(loop: AfkLoopOptions): Promise<Outcome[]> {
   return outcomes;
 }
 
-async function withLinkedIssues(issue: Issue, tracker: Tracker): Promise<Issue> {
-  const numbers = linkedIssueNumbers(issue);
-  return numbers.length > 0 ? { ...issue, linkedIssues: await tracker.linkedIssues(numbers) } : issue;
+async function briefed(issue: Issue, tracker: Tracker): Promise<Issue> {
+  const withComments = { ...issue, comments: await tracker.issueComments(issue.number) };
+  const numbers = linkedIssueNumbers(withComments);
+  return numbers.length > 0 ? { ...withComments, linkedIssues: await tracker.linkedIssues(numbers) } : withComments;
 }
 
 function nextEligibleIssue(backlog: Backlog, outcomes: readonly Outcome[]): Issue | undefined {
@@ -281,6 +287,9 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
   };
   while (failures < attemptBudget) {
     const run = await session.implement(feedback, fixRound?.fixableFindings);
+    if (!fixRound && run.contradiction) {
+      return { issue: issue.number, kind: "handoff", branch, reason: "contradiction", contradiction: run.contradiction, implementerLog: run.log };
+    }
     worktree = await session.inspect();
     if (!fixRound && !worktree.dirty && worktree.commitsAhead === 0) {
       return { issue: issue.number, kind: "handoff", branch, reason: "no-commits", lastReply: run.reply, implementerLog: run.log };
@@ -383,20 +392,27 @@ function bullet({ at, text }: OpenFinding): string {
 async function handOff(issue: Issue, handoff: HandoffOutcome, tracker: Tracker): Promise<HandoffOutcome> {
   await tracker.relabel(issue.number, { remove: readyForAgent, add: readyForHuman });
   const { branch } = handoff;
-  const { why, details } = describeHandoff(handoff);
+  const { why, details, settle = "" } = describeHandoff(handoff);
   await tracker.comment(
     issue.number,
     [
-      `Handed off to a human: ${why}.`,
+      `${loopMarker}\n${handedOff} ${why}.`,
       details,
       `Nothing is pushed. What the session left, if anything, is on the Host: on the local branch \`${branch}\`, or uncommitted in its worktree.`,
-      `To requeue for the loop: remove the local \`${branch}\` branch and its worktree, if they are still there, then relabel the issue \`${readyForAgent}\`.`,
+      `To requeue for the loop: ${settle}remove the local \`${branch}\` branch and its worktree, if they are still there, then relabel the issue \`${readyForAgent}\`.`,
     ].join("\n\n"),
   );
   return handoff;
 }
 
-export function describeHandoff(handoff: HandoffOutcome): { why: string; details: string } {
+export function describeHandoff(handoff: HandoffOutcome): { why: string; details: string; settle?: string } {
+  if (handoff.reason === "contradiction") {
+    return {
+      why: "the Implementer found a Contradiction in the issue",
+      details: `The parts that disagree, as the Implementer gave them (its log on the Host: \`${handoff.implementerLog}\`):\n\n${fenced(handoff.contradiction)}`,
+      settle: "add a comment on this issue saying which part holds, ",
+    };
+  }
   if (handoff.reason === "no-commits") {
     return {
       why: "the Implementer made no commits",

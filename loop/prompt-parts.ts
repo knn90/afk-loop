@@ -1,5 +1,5 @@
 import type { Issue } from "./afk-loop.js";
-import { linkedIssueBlock } from "./linked-issues.js";
+import { linkedIssueBlock, truncationMark } from "./linked-issues.js";
 import type { Project } from "./loop-config.js";
 import { folder, type Platform } from "./platforms.js";
 
@@ -27,12 +27,30 @@ export function hasBlock(reply: string, tag: string): boolean {
   return blocks(reply, tag).length > 0;
 }
 
+export const issueCommentsCharLimit = 20_000;
+
+function newestWithinLimit(comments: readonly string[]): string[] {
+  let over = comments.reduce((length, comment) => length + comment.length, 0) - issueCommentsCharLimit;
+  return comments.flatMap((comment) => {
+    const cut = Math.max(0, Math.min(over, comment.length));
+    over -= cut;
+    return cut > 0 && cut === comment.length ? [] : [comment.slice(cut)];
+  });
+}
+
+function commentBlocks(all: readonly string[]): string {
+  const shown = newestWithinLimit(all);
+  const blocks = shown.map((comment) => `<comment>\n${comment}\n</comment>`);
+  const cut = shown.join("").length < all.join("").length;
+  return [...(cut ? [truncationMark] : []), ...blocks].map((part) => `\n\n${part}`).join("");
+}
+
 export function issueBlock(issue: Issue): string {
   const linked = (issue.linkedIssues ?? []).map((linkedIssue) => `\n\n${linkedIssueBlock(linkedIssue)}`).join("");
   return `<issue>
 # ${issue.title}
 
-${issue.body}
+${issue.body}${commentBlocks(issue.comments ?? [])}
 </issue>${linked}`;
 }
 

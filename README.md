@@ -13,6 +13,7 @@ flowchart TD
     issue([Eligible issue]) --> sandbox[Fresh Sandbox, branch issue/n-slug]
     sandbox --> implement[Implementer: tests and code]
     implement -- no commits, clean worktree --> handoff([Handoff: issue to ready-for-human, one comment, nothing pushed])
+    implement -- Contradiction in the issue --> handoff
     implement -- commits --> test1{Test run}
     test1 -- red, Attempt budget left --> implement
     test1 -- red, Attempt budget spent --> handoff
@@ -30,7 +31,9 @@ flowchart TD
 
 The Host runs the loop and holds the GitHub token; the agents and the Test runs execute in the Sandbox, which has none. The Sandbox is deleted when the issue's run ends.
 
-- **Issue**: the Host pastes into each agent's prompt every issue the issue body names, except those under its Parent and Blocked by headings. An issue with an open blocker waits for a later run, once the blocker's PR is merged.
+- **Issue**: each agent's prompt holds the issue's body and its comments, in posting order. Only comments by authors with write access count, and never the loop's own. Past 20,000 characters the oldest comments are cut. An unreadable comment list stops the run. An issue with an open blocker waits for a later run, once the blocker's PR is merged.
+- **Linked issue**: the Host pastes into each agent's prompt every issue the body or a comment names, up to 5, except those under a Parent or Blocked by heading.
+- **Contradiction**: a comment that says which part of the issue holds is followed. When two parts disagree and nothing says which holds, the Implementer writes no code and the issue is a Handoff. To settle it, add a comment saying which part holds.
 - **Test run**: the `steps` of each present platform whose folder the branch changes against the base branch. The Reviewer gets the same platforms' `standards`. A branch changing no platform's folder has neither.
 - **Attempt budget**: 3 failed Attempts per issue, shared by the Implementer's first round and its Fix round. Uncommitted changes left in the Sandbox are a failed Attempt.
 - **Reviewer**: read-only. After each Reviewer run the Host puts the branch back at the commit the Test run passed, so the pushed commit is always a tested one.
@@ -39,7 +42,7 @@ The Host runs the loop and holds the GitHub token; the agents and the Test runs 
 - **Wrap-up**: reviews the Fix round's commits only. Each Fixable finding left unfixed and each new finding becomes an Open finding. It never starts a second Fix round.
 - **PR**: body is `Closes #n.`, the Reviewer's draft, then the Host's lines (who worked it, the count of Open findings, what the Test run verified). An Open finding with a line in the diff is an inline comment; the rest are in the review's body.
 - **Unreadable Reviewer reply**: in the review, the run stops with an error and no PR. In the Wrap-up, the Host posts the review's Open findings, plus the Fixable findings as one Open finding marked unchecked.
-- **Handoff**: the comment gives why, the last Attempt's feedback, the log's path and the branch's name. What the session left is on the Host, on the local branch or uncommitted in its worktree. To requeue: remove the local branch and its worktree, if they are still there, then relabel the issue `ready-for-agent`.
+- **Handoff**: the comment gives why, the last Attempt's feedback or the Contradiction's two parts, the log's path and the branch's name. What the session left is on the Host, on the local branch or uncommitted in its worktree. To requeue: remove the local branch and its worktree, if they are still there, then relabel the issue `ready-for-agent`.
 - **Logs**: the project's `.sandcastle/logs/`, on the Host. Raw Test run output is in `<branch>-test-run.log`.
 
 ## A project's `.sandcastle/`
