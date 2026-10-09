@@ -63,7 +63,7 @@ describe("implementerPrompt", () => {
 
     assert.ok(
       prompt.includes(
-        "How to work:\n\n- First read the <issue> as one text: its body, then its <comment> blocks in posting order. Where a comment says which part holds, follow the comment. Two parts that disagree, with nothing saying which holds, are a Contradiction: write no code, commit nothing, and quote both parts in the <contradiction> block. The Host returns the issue to the maintainer.\n",
+        "How to work:\n\n- First read the <issue> as one text: its body, then its <comment> blocks in posting order. Where a comment says which part holds, follow the comment. Two parts that disagree, with nothing saying which holds, are a Contradiction: write no code, commit nothing, and quote both parts in the <contradiction> block, each as `<part>the quoted text</part>`. The Host returns the issue to the maintainer.\n",
       ),
     );
   });
@@ -211,13 +211,20 @@ describe("implementerPrompt, Fix round", () => {
 });
 
 describe("contradiction", () => {
-  test("a reply with the block gives its text", () => {
-    assert.equal(contradiction("Stopped.\n<contradiction>\nThe body says daily. The comment says weekly.\n</contradiction>\n<promise>COMPLETE</promise>"), "The body says daily. The comment says weekly.");
+  test("a reply with both parts in the block gives them", () => {
+    const reply = "Stopped.\n<contradiction>\n<part>The body says daily.</part>\n<part>The comment says weekly.</part>\n</contradiction>\n<promise>COMPLETE</promise>";
+
+    assert.equal(contradiction(reply), "The body says daily.\n\nThe comment says weekly.");
   });
 
   test("an empty block or a missing one gives none", () => {
     assert.equal(contradiction("Done.\n<contradiction>\n</contradiction>\n<promise>COMPLETE</promise>"), undefined);
     assert.equal(contradiction("Done."), undefined);
+  });
+
+  test("a block without two parts gives none", () => {
+    assert.equal(contradiction("Done.\n<contradiction>\nNo contradiction found.\n</contradiction>"), undefined);
+    assert.equal(contradiction("Done.\n<contradiction>\n<part>The body says daily.</part>\n<part> </part>\n</contradiction>"), undefined);
   });
 });
 
