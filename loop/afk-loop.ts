@@ -199,7 +199,7 @@ export async function runAfkLoop(loop: AfkLoopOptions): Promise<Outcome[]> {
   while (worked() < cap) {
     const issue = nextEligibleIssue(await loop.tracker.backlog(), outcomes);
     if (!issue) break;
-    const working = briefed(issue, loop.tracker).then((issue) => work(issue, loop));
+    const working = brief(issue, loop.tracker).then((briefed) => work(briefed, loop));
     const outcome = await working.catch((error: unknown): Outcome => ({ issue: issue.number, kind: "error", message: String(error) }));
     outcomes.push(outcome);
     if (outcome.kind === "error") break;
@@ -207,7 +207,7 @@ export async function runAfkLoop(loop: AfkLoopOptions): Promise<Outcome[]> {
   return outcomes;
 }
 
-async function briefed(issue: Issue, tracker: Tracker): Promise<Issue> {
+async function brief(issue: Issue, tracker: Tracker): Promise<Issue> {
   const withComments = { ...issue, comments: await tracker.issueComments(issue.number) };
   const numbers = linkedIssueNumbers(withComments);
   return numbers.length > 0 ? { ...withComments, linkedIssues: await tracker.linkedIssues(numbers) } : withComments;

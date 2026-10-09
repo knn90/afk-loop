@@ -30,19 +30,21 @@ export function hasBlock(reply: string, tag: string): boolean {
 export const issueCommentsCharLimit = 20_000;
 
 function newestWithinLimit(comments: readonly string[]): string[] {
-  let over = comments.reduce((length, comment) => length + comment.length, 0) - issueCommentsCharLimit;
-  return comments.flatMap((comment) => {
-    const cut = Math.max(0, Math.min(over, comment.length));
-    over -= cut;
-    return cut > 0 && cut === comment.length ? [] : [comment.slice(cut)];
-  });
+  let excess = comments.join("").length - issueCommentsCharLimit;
+  const kept: string[] = [];
+  for (const comment of comments) {
+    const dropped = Math.max(0, Math.min(excess, comment.length));
+    excess -= dropped;
+    if (dropped === 0 || dropped < comment.length) kept.push(comment.slice(dropped));
+  }
+  return kept;
 }
 
-function commentBlocks(all: readonly string[]): string {
-  const shown = newestWithinLimit(all);
-  const blocks = shown.map((comment) => `<comment>\n${comment}\n</comment>`);
-  const cut = shown.join("").length < all.join("").length;
-  return [...(cut ? [truncationMark] : []), ...blocks].map((part) => `\n\n${part}`).join("");
+function commentBlocks(comments: readonly string[]): string {
+  const kept = newestWithinLimit(comments);
+  const truncated = kept.join("").length < comments.join("").length;
+  const blocks = kept.map((comment) => `<comment>\n${comment}\n</comment>`);
+  return [...(truncated ? [truncationMark] : []), ...blocks].map((part) => `\n\n${part}`).join("");
 }
 
 export function issueBlock(issue: Issue): string {

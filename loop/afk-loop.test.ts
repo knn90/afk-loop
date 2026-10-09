@@ -82,7 +82,6 @@ describe("runAfkLoop", () => {
   });
 
   test("an issue named in a comment is a Linked issue, except under the comment's Parent and Blocked by headings", async () => {
-    const linked = (number: number) => ({ number, title: `Issue ${number}`, body: "", comments: [] });
     const { sut, agents } = makeSUT({
       issues: [issue(1, { body: "## Blocked by\n\n- #229" })],
       comments: { 1: ["## Parent\n\n#226", "Not the receiver of #250; #229 has the stream."] },
@@ -95,7 +94,6 @@ describe("runAfkLoop", () => {
   });
 
   test("the body and the comments share one limit of Linked issues, the body's first", async () => {
-    const linked = (number: number) => ({ number, title: `Issue ${number}`, body: "", comments: [] });
     const { sut, agents } = makeSUT({
       issues: [issue(1, { body: "#11 #12 #13" })],
       comments: { 1: ["#14 #15", "#16"] },
@@ -1003,6 +1001,10 @@ const server = platform("server");
 
 function testRuns(calls: string[]): number {
   return calls.filter((call) => call.startsWith("test run")).length;
+}
+
+function linked(number: number): LinkedIssue {
+  return { number, title: `Issue ${number}`, body: "", comments: [] };
 }
 
 function issue(number: number, overrides: Partial<Issue> = {}): Issue {

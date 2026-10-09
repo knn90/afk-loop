@@ -42,7 +42,7 @@ The Host runs the loop and holds the GitHub token; the agents and the Test runs 
 - **Wrap-up**: reviews the Fix round's commits only. Each Fixable finding left unfixed and each new finding becomes an Open finding. It never starts a second Fix round.
 - **PR**: body is `Closes #n.`, the Reviewer's draft, then the Host's lines (who worked it, the count of Open findings, what the Test run verified). An Open finding with a line in the diff is an inline comment; the rest are in the review's body.
 - **Unreadable Reviewer reply**: in the review, the run stops with an error and no PR. In the Wrap-up, the Host posts the review's Open findings, plus the Fixable findings as one Open finding marked unchecked.
-- **Handoff**: the comment gives why, the last Attempt's feedback or the Contradiction's two parts, the log's path and the branch's name. What the session left is on the Host, on the local branch or uncommitted in its worktree. To requeue: remove the local branch and its worktree, if they are still there, then relabel the issue `ready-for-agent`.
+- **Handoff**: the comment gives why, the last Attempt's feedback or the Contradiction's two parts, the log's path and the branch's name. What the session left is on the Host, on the local branch or uncommitted in its worktree. To requeue: remove the local branch and its worktree, if they are still there, then relabel the issue `ready-for-agent`. After a Contradiction, first add a comment saying which part holds.
 - **Logs**: the project's `.sandcastle/logs/`, on the Host. Raw Test run output is in `<branch>-test-run.log`.
 
 ## A project's `.sandcastle/`
