@@ -1,11 +1,21 @@
 import type { Issue } from "./afk-loop.js";
 import type { Project } from "./loop-config.js";
-import { sandboxLimits, committed, completionSignal, hostFeedbackBlock, issueBlock, lastBlock, replyBlocks, standardsByFolder, glossaryRule } from "./prompt-parts.js";
+import { sandboxLimits, committed, hostFeedbackBlock, innerBlocks, issueBlock, lastBlock, readIssueFirst, replyBlocks, standardsByFolder, glossaryRule } from "./prompt-parts.js";
 import { skill } from "./skills-plugin.js";
 
 export function findingsLeft(reply: string): string | undefined {
   return lastBlock(reply, "findings-left");
 }
+
+export function contradiction(reply: string): string | undefined {
+  const parts = innerBlocks(lastBlock(reply, "contradiction") ?? "", "part").filter((part) => part !== "");
+  return parts.length >= 2 ? parts.join("\n\n") : undefined;
+}
+
+const contradictionRule = `- ${readIssueFirst}: write no code, commit nothing, and quote both parts in the <contradiction> block, each as \`<part>the quoted text</part>\`. The Host returns the issue to the maintainer.
+`;
+
+const orContradiction = "; or, on a Contradiction, nothing is committed and both parts are in the <contradiction> block";
 
 function fixRoundBlock(fixableFindings: string, feedback?: string): string {
   const rejected = feedback ? `\n\nYour last run in this Fix round was rejected; its commits are on this branch. Fix this too:\n\n<host-feedback>\n${feedback}\n</host-feedback>` : "";
@@ -33,7 +43,9 @@ export function implementerPrompt(project: Project, issue: Issue, branch: string
   const done = fixableFindings
     ? `every finding in <fixable-findings> is fixed or is in <findings-left> with why${feedbackDone}`
     : `every acceptance criterion in the issue has a test and the code for it${feedbackDone}`;
-  const ending = fixableFindings ? replyBlocks(["findings-left"], "An empty block means you left none.") : `Then reply with ${completionSignal}.`;
+  const ending = fixableFindings
+    ? replyBlocks(["findings-left"], "An empty block means you left none.")
+    : replyBlocks(["contradiction"], "An empty block means the issue has no Contradiction.");
 
   return `You are the Implementer for issue #${issue.number} of ${project.repo}, working on branch \`${branch}\`.
 
@@ -41,10 +53,10 @@ ${issueBlock(issue)}${fixableFindings ? fixRoundBlock(fixableFindings, feedback)
 
 How to work:
 
-- ${glossaryRule} Follow ${standardsByFolder(project.platforms)} and docs/agents/git-conventions.md.
+${fixableFindings ? "" : contradictionRule}- ${glossaryRule} Follow ${standardsByFolder(project.platforms)} and docs/agents/git-conventions.md.
 - Invoke the \`${skill("tdd")}\` skill with the Skill tool and ${workTestFirst(fixableFindings !== undefined)}.
 ${fixableFindings ? fixRoundRules : ""}${sandboxLimits(project)}
 - Commit every change on this branch as \`[#${issue.number}] - Imperative summary\`.
 
-Done means ${done}, ${committed}. ${ending}`;
+Done means ${done}, ${committed}${fixableFindings ? "" : orContradiction}. ${ending}`;
 }

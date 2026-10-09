@@ -13,6 +13,7 @@ export function fenced(text: string): string {
 }
 
 export const loopMarker = "<!-- afk-loop -->";
+export const handedOff = "Handed off to a human:";
 
 export const budgetSpentWhy = `the Attempt budget (${attemptBudget}) ran out without a green Test run`;
 

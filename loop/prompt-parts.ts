@@ -11,6 +11,10 @@ function blocks(reply: string, tag: string): RegExpExecArray[] {
   return [...reply.matchAll(new RegExp(`<${tag}>((?:(?!<${tag}>)[\\s\\S])*?)</${tag}>`, "g"))];
 }
 
+export function innerBlocks(text: string, tag: string): string[] {
+  return blocks(text, tag).map((block) => block[1]?.trim() ?? "");
+}
+
 export function lastBlock(reply: string, tag: string): string | undefined {
   const text = blocks(reply, tag).at(-1)?.[1]?.trim();
   return text && !/^none\.?$/i.test(text) ? text : undefined;
@@ -27,14 +31,21 @@ export function hasBlock(reply: string, tag: string): boolean {
   return blocks(reply, tag).length > 0;
 }
 
+function commentBlocks(comments: readonly string[]): string {
+  return comments.map((comment) => `\n\n<comment>\n${comment}\n</comment>`).join("");
+}
+
 export function issueBlock(issue: Issue): string {
   const linked = (issue.linkedIssues ?? []).map((linkedIssue) => `\n\n${linkedIssueBlock(linkedIssue)}`).join("");
   return `<issue>
 # ${issue.title}
 
-${issue.body}
+${issue.body}${commentBlocks(issue.comments ?? [])}
 </issue>${linked}`;
 }
+
+export const readIssueFirst =
+  "First read the <issue> as one text: its body, then its <comment> blocks in posting order. Where a comment says which part holds, follow the comment. Two parts that disagree, with nothing saying which holds, are a Contradiction";
 
 export function hostFeedbackBlock(feedback?: string): string {
   return feedback

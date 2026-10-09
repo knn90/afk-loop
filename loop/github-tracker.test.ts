@@ -7,6 +7,8 @@ import { githubTracker } from "./github-tracker.js";
 import { hostAt } from "./host.js";
 import { defineLoop } from "./loop-config.js";
 
+const failed = "gh fails";
+
 describe("githubTracker", () => {
   const sut = makeSUT();
   before(sut.install);
@@ -97,6 +99,33 @@ describe("githubTracker, linked issues", () => {
   });
 });
 
+describe("githubTracker, an issue's comments", () => {
+  const comment = (body: string, author_association: string) => ({ body, author_association });
+  const sut = makeSUT({
+    "issues/8/comments": failed,
+    "issues/7/comments": JSON.stringify([
+      [comment("Use the weekly streak.", "OWNER"), comment("Use the daily one.", "NONE"), comment("<!-- afk-loop -->\nHanded off to a human: the Implementer made no commits.", "OWNER")],
+      [comment("Handed off to a human: the Attempt budget (3) ran out without a green Test run.\n\nerror: boom", "OWNER"), comment("Weeks start on Monday.", "COLLABORATOR")],
+    ]),
+  });
+  before(sut.install);
+  after(sut.uninstall);
+
+  test("they are its write-access authors' comments in posting order, without the loop's own or a Handoff comment from before the marker", async () => {
+    const tracker = githubTracker(defineLoop(config), hostAt(tmpdir()));
+
+    const comments = await tracker.issueComments(7);
+
+    assert.deepEqual(comments, ["Use the weekly streak.", "Weeks start on Monday."]);
+  });
+
+  test("a read GitHub fails is an error, not an issue without comments", async () => {
+    const tracker = githubTracker(defineLoop(config), hostAt(tmpdir()));
+
+    await assert.rejects(tracker.issueComments(8));
+  });
+});
+
 // MARK: - Helpers
 
 const config = {
@@ -124,6 +153,7 @@ if (args.includes("--input")) {
 }
 const responses = ${JSON.stringify(responses)};
 const asked = Object.keys(responses).find((key) => args.some((arg) => arg.includes(key)) || args.join(" ").startsWith(key));
+if (asked !== undefined && responses[asked] === ${JSON.stringify(failed)}) process.exit(1);
 console.log(asked === undefined ? "https://github.com/acme/Habitat/pull/9" : responses[asked]);
 `,
   );

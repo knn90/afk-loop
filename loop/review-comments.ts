@@ -1,4 +1,4 @@
-import { loopMarker } from "./loop-rules.js";
+import { handedOff, loopMarker } from "./loop-rules.js";
 
 const writeAccess = ["OWNER", "COLLABORATOR"];
 
@@ -7,5 +7,5 @@ export function hasWriteAccess(comment: { readonly authorAssociation: string }):
 }
 
 export function isLoopComment(comment: { readonly body: string }): boolean {
-  return comment.body.startsWith(loopMarker);
+  return comment.body.startsWith(loopMarker) || comment.body.startsWith(handedOff);
 }

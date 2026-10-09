@@ -14,6 +14,26 @@ describe("reviewerPrompt", () => {
     assert.ok(!prompt.includes("CONTEXT"));
   });
 
+  test("the issue carries its comments, so a point a comment settles is the issue's own text", () => {
+    const sut = makeSUT(undefined, ["Use the weekly streak."]);
+
+    const prompt = sut.prompt();
+
+    assert.ok(prompt.includes("<issue>\n# Fix streak\n\nBody\n\n<comment>\nUse the weekly streak.\n</comment>\n</issue>"));
+  });
+
+  test("a comment that says which part holds is followed, and a Contradiction the diff builds on is an Open finding", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt();
+
+    assert.ok(
+      prompt.includes(
+        "- First read the <issue> as one text: its body, then its <comment> blocks in posting order. Where a comment says which part holds, follow the comment. Two parts that disagree, with nothing saying which holds, are a Contradiction: where the diff builds on one of them, it is an Open finding that quotes both parts.\n",
+      ),
+    );
+  });
+
   test("names the code-review skill and inlines its Spec, Standards and diff range", () => {
     const sut = makeSUT();
 
@@ -179,6 +199,14 @@ describe("reviewerPrompt, PR body", () => {
 });
 
 describe("wrapUpPrompt", () => {
+  test("the issue carries its comments", () => {
+    const sut = makeSUT(undefined, ["Use the weekly streak."]);
+
+    const prompt = sut.wrapUp();
+
+    assert.ok(prompt.includes("<issue>\n# Fix streak\n\nBody\n\n<comment>\nUse the weekly streak.\n</comment>\n</issue>"));
+  });
+
   test("carries run 1's Fixable findings, and its Open findings with their paths and lines", () => {
     const sut = makeSUT();
 
@@ -507,8 +535,8 @@ const runOneOpenFindings: OpenFinding[] = [
   { text: "No test covers a skipped day." },
 ];
 
-function makeSUT(standards = ["Prefer value types."]) {
-  const issue: Issue = { number: 7, title: "Fix streak", body: "Body", labels: [], openBlockers: 0 };
+function makeSUT(standards = ["Prefer value types."], comments: string[] = []) {
+  const issue: Issue = { number: 7, title: "Fix streak", body: "Body", labels: [], openBlockers: 0, comments };
   return {
     fixableFindings,
     openFindings,
