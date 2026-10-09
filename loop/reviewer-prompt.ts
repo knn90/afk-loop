@@ -1,7 +1,7 @@
 import type { FirstReview, FixRound, Issue, OpenFinding } from "./afk-loop.js";
 import type { Project } from "./loop-config.js";
 import { changesNoPlatform } from "./platforms.js";
-import { glossaryRule, hasBlock, issueBlock, lastBlock, replyBlocks, reviewerSandbox } from "./prompt-parts.js";
+import { glossaryRule, hasBlock, issueBlock, lastBlock, readIssueFirst, replyBlocks, reviewerSandbox } from "./prompt-parts.js";
 import { skill } from "./skills-plugin.js";
 
 export interface ReviewBrief {
@@ -76,6 +76,7 @@ ${standardsBlock(project, standards)}
 How to work:
 
 ${readOnly}
+- ${readIssueFirst}: where the diff builds on one of them, it is an Open finding that quotes both parts.
 - Invoke the \`${skill("code-review")}\` skill with the Skill tool. Its inputs are all here:
   - Fixed point: \`${base}\`, so the diff is the branch diff, \`git diff ${base}...HEAD\`.
   - Spec: the <issue> block.

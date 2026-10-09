@@ -1,6 +1,6 @@
 import type { Issue } from "./afk-loop.js";
 import type { Project } from "./loop-config.js";
-import { sandboxLimits, committed, hostFeedbackBlock, innerBlocks, issueBlock, lastBlock, replyBlocks, standardsByFolder, glossaryRule } from "./prompt-parts.js";
+import { sandboxLimits, committed, hostFeedbackBlock, innerBlocks, issueBlock, lastBlock, readIssueFirst, replyBlocks, standardsByFolder, glossaryRule } from "./prompt-parts.js";
 import { skill } from "./skills-plugin.js";
 
 export function findingsLeft(reply: string): string | undefined {
@@ -12,7 +12,7 @@ export function contradiction(reply: string): string | undefined {
   return parts.length >= 2 ? parts.join("\n\n") : undefined;
 }
 
-const contradictionRule = `- First read the <issue> as one text: its body, then its <comment> blocks in posting order. Where a comment says which part holds, follow the comment. Two parts that disagree, with nothing saying which holds, are a Contradiction: write no code, commit nothing, and quote both parts in the <contradiction> block, each as \`<part>the quoted text</part>\`. The Host returns the issue to the maintainer.
+const contradictionRule = `- ${readIssueFirst}: write no code, commit nothing, and quote both parts in the <contradiction> block, each as \`<part>the quoted text</part>\`. The Host returns the issue to the maintainer.
 `;
 
 const orContradiction = "; or, on a Contradiction, nothing is committed and both parts are in the <contradiction> block";

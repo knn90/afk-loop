@@ -44,6 +44,9 @@ ${issue.body}${commentBlocks(issue.comments ?? [])}
 </issue>${linked}`;
 }
 
+export const readIssueFirst =
+  "First read the <issue> as one text: its body, then its <comment> blocks in posting order. Where a comment says which part holds, follow the comment. Two parts that disagree, with nothing saying which holds, are a Contradiction";
+
 export function hostFeedbackBlock(feedback?: string): string {
   return feedback
     ? `
