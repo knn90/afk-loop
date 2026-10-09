@@ -20,6 +20,10 @@ _Avoid_: candidate, ticket, task
 An issue that the issue being worked names in its body or comments, outside its Parent and Blocked by headings. The agents get its text beside the issue's.
 _Avoid_: related issue, reference
 
+**Contradiction**:
+Two parts of an issue's body and comments that disagree, with no comment saying which holds.
+_Avoid_: conflict
+
 **Implementer**:
 The Sandbox agent that writes the tests and code for one Eligible issue, and fixes the Reviewer's Fixable findings.
 
@@ -59,7 +63,7 @@ The 3 failed Attempts an issue may spend, shared by the Implementer's first roun
 _Avoid_: retries, max tries
 
 **Handoff**:
-Returning an issue to the maintainer as `ready-for-human` when the Attempt budget runs out in the Implementer's first round or the Implementer makes no commits. The Fix round never ends in one. A Handoff does not end the run.
+Returning an issue to the maintainer as `ready-for-human` when the Attempt budget runs out in the Implementer's first round, the Implementer makes no commits, or it finds a Contradiction in the issue. The Fix round never ends in one. A Handoff does not end the run.
 _Avoid_: failure, abort
 
 **Leftover**:
