@@ -4,7 +4,6 @@ import type { Issue, LinkedIssue } from "./afk-loop.js";
 import type { Platform } from "./platforms.js";
 import { contradiction, findingsLeft, implementerPrompt } from "./implementer-prompt.js";
 import type { Project } from "./loop-config.js";
-import { issueCommentsCharLimit } from "./prompt-parts.js";
 
 describe("implementerPrompt", () => {
   test("reads the glossary, and the glossary map when it exists", () => {
@@ -48,34 +47,13 @@ describe("implementerPrompt", () => {
     assert.ok(prompt.includes("<issue>\n# Fix streak\n\nBody\n</issue>"));
   });
 
-  test("comments past the limit are cut from the oldest end, with the truncation mark where the cut is", () => {
+  test("comments are whole however long they are", () => {
     const sut = makeSUT();
-    const older = "a".repeat(issueCommentsCharLimit - 5_000);
-    const newer = "b".repeat(10_000);
+    const long = "a".repeat(50_000);
 
-    const prompt = sut.commented([older, newer]);
+    const prompt = sut.commented(["Use the daily streak.", long]);
 
-    assert.ok(prompt.includes(`Body\n\n… truncated\n\n<comment>\n${"a".repeat(10_000)}\n</comment>\n\n<comment>\n${newer}\n</comment>\n</issue>`));
-  });
-
-  test("a comment the limit leaves nothing of is left out", () => {
-    const sut = makeSUT();
-    const newest = "b".repeat(issueCommentsCharLimit);
-
-    const prompt = sut.commented(["Use the daily streak.", newest]);
-
-    assert.ok(prompt.includes(`Body\n\n… truncated\n\n<comment>\n${newest}\n</comment>\n</issue>`));
-    assert.ok(!prompt.includes("Use the daily streak."));
-  });
-
-  test("the limit never cuts the body", () => {
-    const sut = makeSUT();
-    const body = "x".repeat(issueCommentsCharLimit * 2);
-
-    const prompt = sut.commented(["Use the weekly streak."], body);
-
-    assert.ok(prompt.includes(`${body}\n\n<comment>\nUse the weekly streak.\n</comment>\n</issue>`));
-    assert.ok(!prompt.includes("truncated"));
+    assert.ok(prompt.includes(`Body\n\n<comment>\nUse the daily streak.\n</comment>\n\n<comment>\n${long}\n</comment>\n</issue>`));
   });
 
   test("a comment that says which part holds is followed, and a Contradiction stops the work before any code", () => {

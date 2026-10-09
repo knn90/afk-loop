@@ -31,7 +31,7 @@ flowchart TD
 
 The Host runs the loop and holds the GitHub token; the agents and the Test runs execute in the Sandbox, which has none. The Sandbox is deleted when the issue's run ends.
 
-- **Issue**: each agent's prompt holds the issue's body and its comments, in posting order. Only comments by authors with write access count, and never the loop's own. Past 20,000 characters the oldest comments are cut. An unreadable comment list stops the run. An issue with an open blocker waits for a later run, once the blocker's PR is merged.
+- **Issue**: each agent's prompt holds the issue's body and its comments, in posting order. Only comments by authors with write access count, and never the loop's own. An unreadable comment list stops the run. An issue with an open blocker waits for a later run, once the blocker's PR is merged.
 - **Linked issue**: the Host pastes into each agent's prompt every issue the body or a comment names, up to 5, except those under a Parent or Blocked by heading.
 - **Contradiction**: a comment that says which part of the issue holds is followed. When two parts disagree and nothing says which holds, the Implementer writes no code and the issue is a Handoff. To settle it, add a comment saying which part holds.
 - **Test run**: the `steps` of each present platform whose folder the branch changes against the base branch. The Reviewer gets the same platforms' `standards`. A branch changing no platform's folder has neither.

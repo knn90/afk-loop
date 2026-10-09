@@ -1,5 +1,5 @@
 import type { Issue } from "./afk-loop.js";
-import { linkedIssueBlock, truncationMark } from "./linked-issues.js";
+import { linkedIssueBlock } from "./linked-issues.js";
 import type { Project } from "./loop-config.js";
 import { folder, type Platform } from "./platforms.js";
 
@@ -9,6 +9,10 @@ export const glossaryRule = "Read GLOSSARY.md and use its vocabulary; if GLOSSAR
 
 function blocks(reply: string, tag: string): RegExpExecArray[] {
   return [...reply.matchAll(new RegExp(`<${tag}>((?:(?!<${tag}>)[\\s\\S])*?)</${tag}>`, "g"))];
+}
+
+export function innerBlocks(text: string, tag: string): string[] {
+  return blocks(text, tag).map((block) => block[1]?.trim() ?? "");
 }
 
 export function lastBlock(reply: string, tag: string): string | undefined {
@@ -27,24 +31,8 @@ export function hasBlock(reply: string, tag: string): boolean {
   return blocks(reply, tag).length > 0;
 }
 
-export const issueCommentsCharLimit = 20_000;
-
-function newestWithinLimit(comments: readonly string[]): string[] {
-  let excess = comments.join("").length - issueCommentsCharLimit;
-  const kept: string[] = [];
-  for (const comment of comments) {
-    const dropped = Math.max(0, Math.min(excess, comment.length));
-    excess -= dropped;
-    if (dropped === 0 || dropped < comment.length) kept.push(comment.slice(dropped));
-  }
-  return kept;
-}
-
 function commentBlocks(comments: readonly string[]): string {
-  const kept = newestWithinLimit(comments);
-  const truncated = kept.join("").length < comments.join("").length;
-  const blocks = kept.map((comment) => `<comment>\n${comment}\n</comment>`);
-  return [...(truncated ? [truncationMark] : []), ...blocks].map((part) => `\n\n${part}`).join("");
+  return comments.map((comment) => `\n\n<comment>\n${comment}\n</comment>`).join("");
 }
 
 export function issueBlock(issue: Issue): string {

@@ -2,7 +2,7 @@ import type { Issue, LinkedIssue } from "./afk-loop.js";
 
 export const linkedIssueLimit = 5;
 export const linkedIssueCharLimit = 20_000;
-export const truncationMark = "… truncated";
+const truncated = "\n… truncated";
 const relationSections = /^(parent|blocked by)$/i;
 const issueLink = /(?<![\w/])#(\d+)\b|\/issues\/(\d+)\b/g;
 
@@ -26,6 +26,6 @@ export function linkedIssueNumbers(issue: Pick<Issue, "number" | "body" | "comme
 
 export function linkedIssueBlock(linked: LinkedIssue): string {
   const text = [`# ${linked.title}`, linked.body, ...linked.comments].join("\n\n");
-  const shown = text.length > linkedIssueCharLimit ? `${text.slice(0, linkedIssueCharLimit)}\n${truncationMark}` : text;
+  const shown = text.length > linkedIssueCharLimit ? `${text.slice(0, linkedIssueCharLimit)}${truncated}` : text;
   return `<linked-issue number="${linked.number}">\n${shown}\n</linked-issue>`;
 }
