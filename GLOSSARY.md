@@ -12,6 +12,10 @@ _Avoid_: orchestrator, the Mac
 The macOS VM an issue's agents and Test runs execute in. One per issue, with no GitHub token.
 _Avoid_: container, VM image
 
+**Sandbox env**:
+The variables a Sandbox's agents run with, such as the Claude token. Never a GitHub token; a Test run does not run with them.
+_Avoid_: agent env
+
 **Eligible issue**:
 An open `ready-for-agent` issue with no open blocker, no linked open PR and no pushed Issue branch.
 _Avoid_: candidate, ticket, task

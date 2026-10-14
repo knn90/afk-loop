@@ -15,7 +15,7 @@ The Sandbox is a Tart macOS VM on the Host machine. The agent, its builds and th
 - **Base VM**: Cirrus Labs `macos-tahoe-xcode:26.4` plus `afk-loop build-image`: Claude Code upgraded, the skills plugin, one pre-warm Test run.
 - **Test run**: the loop executes `xcodebuild` in the issue's VM after each agent run and reads the exit code. A green result is the loop's reading, not the agent's claim.
 - **Commits return as a git bundle** the Host fetches, so subject and hash are unchanged. Sandcastle's own return (`git format-patch` + `git am`) still runs after each agent run, but strips a leading `[#n]` and rewrites hashes; the Host then resets the branch to the VM's HEAD from the bundle.
-- **Credentials**: the VM gets only `CLAUDE_CODE_OAUTH_TOKEN`. The Host holds `GH_TOKEN` and does every push, PR, label and comment.
+- **Credentials**: the VM gets only `CLAUDE_CODE_OAUTH_TOKEN`, written once into an owner-only file in the guest home that each agent command sources, so it is on no `tart exec` command line. The Host holds `GH_TOKEN` and does every push, PR, label and comment.
 
 ## Spike
 
@@ -39,7 +39,7 @@ Host: Apple Silicon, 10 cores, 16 GB, macOS 26.4, Xcode 26.4. VM: 6 CPU, 8 GB, T
 
 ## Risks and mitigations
 
-- **Agent and Test run share one VM.** The agent could tamper with the toolchain or the simulator so a broken branch tests green. Accepted: every PR still gets the maintainer's review; a second VM is the fix if it ever bites.
+- **Agent and Test run share one VM.** The agent could tamper with the toolchain or the simulator so a broken branch tests green. Accepted: every PR still gets the maintainer's review; a second VM is the fix if it ever bites. A Test run can also read the agent's token from its env file; it runs the agent's own code, which holds the token anyway.
 - **Open network.** The VM has default NAT internet access. Accepted; it holds no GitHub token.
 - **Fetching agent-made git objects on the Host.** The Host fetches the bundle with `fetch.fsckObjects` on and runs git with hooks off; it never builds or runs the code.
 - **`tart stop` can lose recent guest writes.** The base VM is shut down from inside the guest.
