@@ -60,6 +60,10 @@ interface AgentSandbox extends Omit<Session, "inspect"> {
   remove(): Promise<void>;
 }
 
+export function createIssueBranch(host: Host, branch: string, base: string) {
+  host.git("branch", branch, base);
+}
+
 export function remoteBase({ baseBranch }: Loop): string {
   return `refs/remotes/origin/${baseBranch}`;
 }
@@ -172,6 +176,7 @@ export function sandcastleAgents(loop: Loop, host: Host): Agents {
     async start(issue, branch) {
       host.fetchFromGitHub(loop.repo, loop.baseBranch);
       const base = commitAt(host, remoteBase(loop));
+      createIssueBranch(host, branch, base);
       const sandbox = await openSandbox(loop, host, loop.vms.issue(issue.number), branch, `#${issue.number}`);
       const agentRuns = { Implementer: 0, Reviewer: 0 };
       const logName = (role: keyof typeof agentRuns) => {
