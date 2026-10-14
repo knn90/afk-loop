@@ -67,9 +67,9 @@ export function remoteBase({ baseBranch }: Loop): string {
 export async function openSandbox(loop: Loop, host: Host, vm: string, branch: string, label: string): Promise<AgentSandbox> {
   mkdirSync(runsDir(host), { recursive: true });
   writeFileSync(runMarker(host, branch), `${label}\n`);
+  host.git("branch", "--no-track", branch, remoteBase(loop));
   const sandbox = await createSandbox({
     branch,
-    baseBranch: remoteBase(loop),
     cwd: host.repoRoot,
     sandbox: tartSandbox({ baseVm: loop.vms.base, vm }),
   });
