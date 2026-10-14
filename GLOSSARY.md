@@ -13,11 +13,11 @@ The macOS VM an issue's agents and Test runs execute in. One per issue, with no 
 _Avoid_: container, VM image
 
 **Eligible issue**:
-An open `ready-for-agent` issue with no open blocker, no linked open PR and no pushed `issue/<n>-*` branch.
+An open `ready-for-agent` issue with no open blocker, no linked open PR and no pushed Issue branch.
 _Avoid_: candidate, ticket, task
 
 **Issue branch**:
-The `issue/<n>-<slug>` branch an issue's work is built on. Created fresh from the tip of the base branch each time the issue is started, never from a stale ref of the same name.
+The `issue/<n>-<slug>` branch an issue's work is built on. It starts at the base branch's latest commit each time the issue is started.
 _Avoid_: feature branch, work branch
 
 **Linked issue**:
@@ -71,4 +71,4 @@ Returning an issue to the maintainer as `ready-for-human` when the Attempt budge
 _Avoid_: failure, abort
 
 **Leftover**:
-A local worktree and branch, or a Sandbox, from an interrupted run that was never pushed; discarded, and the issue redone.
+A local worktree and Issue branch, or a Sandbox, from an interrupted run that was never pushed; discarded, and the issue redone.
