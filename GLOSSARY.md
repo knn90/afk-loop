@@ -13,8 +13,8 @@ The macOS VM an issue's agents and Test runs execute in. One per issue, with no 
 _Avoid_: container, VM image
 
 **Sandbox env**:
-The variables a Sandbox's agents run with, such as the Claude token. Never a GitHub token, and never seen by a Test run.
-_Avoid_: .env, agent env
+The variables a Sandbox's agents run with, such as the Claude token. Never a GitHub token; a Test run does not run with them.
+_Avoid_: agent env
 
 **Eligible issue**:
 An open `ready-for-agent` issue with no open blocker, no linked open PR and no pushed Issue branch.

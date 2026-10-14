@@ -5,8 +5,9 @@ import { homedir } from "node:os";
 import { basename, dirname } from "node:path";
 import { createInterface } from "node:readline";
 import { pipeline } from "node:stream/promises";
-import { createIsolatedSandboxProvider, type ExecResult, type IsolatedSandboxHandle } from "@ai-hero/sandcastle";
+import { createIsolatedSandboxProvider, type ExecResult, type IsolatedSandboxHandle, type SandboxExecOptions } from "@ai-hero/sandcastle";
 import type { SandboxExec } from "./afk-loop.js";
+import { check } from "./host.js";
 
 const localTart = `${homedir()}/.local/bin/tart`;
 export const tartBin = existsSync(localTart) ? localTart : "tart";
@@ -131,8 +132,8 @@ export async function copyFileOut(vm: string, guestPath: string, hostPath: strin
   await Promise.all([pipeline(read.stdout!, createWriteStream(hostPath)), finished(read, `copy of ${basename(guestPath)} out of ${vm}`)]);
 }
 
-const envFile = "~/.sandbox.env";
-export const writeEnvFile = `umask 077 && cat > ${envFile}`;
+const sandboxEnvFile = "~/.sandbox.env";
+export const writeSandboxEnvScript = `umask 077 && cat > ${sandboxEnvFile}`;
 
 export function envFileText(env: Record<string, string>): string {
   return Object.entries(env)
@@ -140,8 +141,8 @@ export function envFileText(env: Record<string, string>): string {
     .join("");
 }
 
-export function sandboxScript(command: string, opts?: { readonly cwd?: string; readonly sudo?: boolean }): string {
-  return `. ${envFile}; cd ${quote(opts?.cwd ?? guestRepo)} && ${opts?.sudo ? "sudo " : ""}${command}`;
+export function sandboxScript(command: string, opts?: SandboxExecOptions): string {
+  return `. ${sandboxEnvFile} && cd ${quote(opts?.cwd ?? guestRepo)} && ${opts?.sudo ? "sudo " : ""}${command}`;
 }
 
 export const tartSandbox = (options: { readonly baseVm: string; readonly vm: string }) =>
@@ -153,8 +154,8 @@ export const tartSandbox = (options: { readonly baseVm: string; readonly vm: str
       tart("clone", options.baseVm, vm);
       await boot(vm);
 
-      const written = await guestExec(vm, writeEnvFile, { stdin: envFileText(env) });
-      if (written.exitCode !== 0) throw new Error(`Sandbox env not written into ${vm}: ${written.stderr}`);
+      const envWrite = await guestExec(vm, writeSandboxEnvScript, { stdin: envFileText(env) });
+      check(envWrite.exitCode === 0, `writing the Sandbox env failed in ${vm}: ${envWrite.stderr}`);
       const exec: IsolatedSandboxHandle["exec"] = (command, opts) => guestExec(vm, sandboxScript(command, opts), opts);
       await exec(`mkdir -p ${quote(guestRepo)}`, { cwd: "/" });
 
