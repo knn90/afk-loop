@@ -16,6 +16,10 @@ _Avoid_: container, VM image
 An open `ready-for-agent` issue with no open blocker, no linked open PR and no pushed `issue/<n>-*` branch.
 _Avoid_: candidate, ticket, task
 
+**Issue branch**:
+The `issue/<n>-<slug>` branch an issue's work is built on. Created fresh from the tip of the base branch each time the issue is started, never from a stale ref of the same name.
+_Avoid_: feature branch, work branch
+
 **Linked issue**:
 An issue that the issue being worked names in its body or comments, outside its Parent and Blocked by headings. The agents get its text beside the issue's.
 _Avoid_: related issue, reference
