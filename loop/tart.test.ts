@@ -4,35 +4,43 @@ import { existsSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
-import { envFileText, sandboxScript, writeSandboxEnvScript } from "./tart.js";
+import { sandboxEnvFile, sandboxEnvScripts } from "./tart.js";
 
-describe("the Sandbox env", () => {
-  test("reaches a Sandbox command without being in its script", () => {
-    const home = mkdtempSync(join(tmpdir(), "sandbox-home-"));
+describe("sandboxEnvScripts", () => {
+  test("hands the Sandbox env to a Sandbox command through stdin, never through a script", () => {
+    const home = newHome();
     const token = "sk-ant-oat01-it's-secret";
-    bash(home, writeSandboxEnvScript, envFileText({ CLAUDE_CODE_OAUTH_TOKEN: token }));
+    const scripts = sandboxEnvScripts({ CLAUDE_CODE_OAUTH_TOKEN: token });
+    const command = scripts.exec("printenv CLAUDE_CODE_OAUTH_TOKEN", { cwd: home });
 
-    const script = sandboxScript("printenv CLAUDE_CODE_OAUTH_TOKEN", { cwd: home });
+    bash(home, scripts.write.script, scripts.write.stdin);
 
-    assert.equal(bash(home, script).stdout.trim(), token);
-    assert.ok(!script.includes("secret"));
+    assert.equal(bash(home, command).stdout.trim(), token);
+    assert.ok(!`${scripts.write.script}\n${command}`.includes("secret"));
   });
 
-  test("missing, stops a Sandbox command before it runs", () => {
-    const home = mkdtempSync(join(tmpdir(), "sandbox-home-"));
+  test("writes the Sandbox env to a file only its owner can read", () => {
+    const home = newHome();
+    const { write } = sandboxEnvScripts({ CLAUDE_CODE_OAUTH_TOKEN: "token" });
 
-    assert.notEqual(bash(home, sandboxScript("touch ran", { cwd: home })).status, 0);
+    bash(home, `umask 022; ${write.script}`, write.stdin);
+
+    assert.equal(statSync(sandboxEnvFile.replace("~", home)).mode & 0o777, 0o600);
+  });
+
+  test("stops a Sandbox command when the Sandbox env file is missing", () => {
+    const home = newHome();
+
+    const result = bash(home, sandboxEnvScripts({}).exec("touch ran", { cwd: home }));
+
+    assert.notEqual(result.status, 0);
     assert.ok(!existsSync(join(home, "ran")));
   });
-
-  test("is written to a file only its owner can read", () => {
-    const home = mkdtempSync(join(tmpdir(), "sandbox-home-"));
-
-    bash(home, `umask 022; ${writeSandboxEnvScript}`, envFileText({ CLAUDE_CODE_OAUTH_TOKEN: "token" }));
-
-    assert.equal(statSync(join(home, ".sandbox.env")).mode & 0o777, 0o600);
-  });
 });
+
+function newHome(): string {
+  return mkdtempSync(join(tmpdir(), "sandbox-home-"));
+}
 
 function bash(home: string, script: string, input?: string) {
   const result = spawnSync("/bin/bash", ["-c", script], { encoding: "utf8", input, env: { PATH: process.env.PATH, HOME: home } });

@@ -100,9 +100,13 @@ export function guestExec(vm: string, script: string, options: GuestOptions = {}
   });
 }
 
+function inFolder(folder: string, command: string): string {
+  return `cd ${quote(folder)} && ${command}`;
+}
+
 export function repoExec(vm: string): SandboxExec {
   return async (command, options) => {
-    const result = await guestExec(vm, `cd ${quote(`${guestRepo}/${options?.cwd ?? ""}`)} && ${command}`, { timeoutMs: options?.timeoutMs });
+    const result = await guestExec(vm, inFolder(`${guestRepo}/${options?.cwd ?? ""}`, command), { timeoutMs: options?.timeoutMs });
     return { exitCode: result.exitCode, output: result.stdout + result.stderr };
   };
 }
@@ -132,17 +136,19 @@ export async function copyFileOut(vm: string, guestPath: string, hostPath: strin
   await Promise.all([pipeline(read.stdout!, createWriteStream(hostPath)), finished(read, `copy of ${basename(guestPath)} out of ${vm}`)]);
 }
 
-const sandboxEnvFile = "~/.sandbox.env";
-export const writeSandboxEnvScript = `umask 077 && cat > ${sandboxEnvFile}`;
+export const sandboxEnvFile = "~/.sandbox.env";
 
-export function envFileText(env: Record<string, string>): string {
-  return Object.entries(env)
-    .map(([key, value]) => `export ${key}=${quote(value)}\n`)
-    .join("");
-}
-
-export function sandboxScript(command: string, opts?: SandboxExecOptions): string {
-  return `. ${sandboxEnvFile} && cd ${quote(opts?.cwd ?? guestRepo)} && ${opts?.sudo ? "sudo " : ""}${command}`;
+export function sandboxEnvScripts(env: Record<string, string>) {
+  return {
+    write: {
+      script: `umask 077 && cat > ${sandboxEnvFile}`,
+      stdin: Object.entries(env)
+        .map(([key, value]) => `export ${key}=${quote(value)}\n`)
+        .join(""),
+    },
+    exec: (command: string, opts?: SandboxExecOptions) =>
+      `. ${sandboxEnvFile} && ${inFolder(opts?.cwd ?? guestRepo, `${opts?.sudo ? "sudo " : ""}${command}`)}`,
+  };
 }
 
 export const tartSandbox = (options: { readonly baseVm: string; readonly vm: string }) =>
@@ -154,9 +160,10 @@ export const tartSandbox = (options: { readonly baseVm: string; readonly vm: str
       tart("clone", options.baseVm, vm);
       await boot(vm);
 
-      const envWrite = await guestExec(vm, writeSandboxEnvScript, { stdin: envFileText(env) });
+      const scripts = sandboxEnvScripts(env);
+      const envWrite = await guestExec(vm, scripts.write.script, { stdin: scripts.write.stdin });
       check(envWrite.exitCode === 0, `writing the Sandbox env failed in ${vm}: ${envWrite.stderr}`);
-      const exec: IsolatedSandboxHandle["exec"] = (command, opts) => guestExec(vm, sandboxScript(command, opts), opts);
+      const exec: IsolatedSandboxHandle["exec"] = (command, opts) => guestExec(vm, scripts.exec(command, opts), opts);
       await exec(`mkdir -p ${quote(guestRepo)}`, { cwd: "/" });
 
       return {
