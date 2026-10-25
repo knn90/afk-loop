@@ -74,5 +74,13 @@ _Avoid_: retries, max tries
 Returning an issue to the maintainer as `ready-for-human` when the Attempt budget runs out in the Implementer's first round, the Implementer makes no commits, or it finds a Contradiction in the issue. The Fix round never ends in one. A Handoff does not end the run.
 _Avoid_: failure, abort
 
+**Behavior evidence**:
+The screenshots and video a behavior check captures of the running app, shown on the PR and kept on the Host for 30 days. Only the final check's evidence reaches the PR.
+_Avoid_: evidence, artifacts, proof
+
+**Evidence manifest**:
+The behavior check's record of its outcome, the commit it checked, and each claim with the Behavior evidence behind it. Only files it lists reach the PR.
+_Avoid_: verdict file, report
+
 **Leftover**:
 A local worktree and Issue branch, or a Sandbox, from an interrupted run that was never pushed; discarded, and the issue redone.
