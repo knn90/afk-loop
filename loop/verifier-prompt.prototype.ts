@@ -27,8 +27,8 @@ How to work:
 - You change no tracked file and commit nothing; you may write outside the repo. After your run the Host checks HEAD is \`${head}\` and \`git status\` is clean; if not, the Behavior check is INCONCLUSIVE whatever you report.
 - ${glossaryRule}
 - Read the branch diff, \`git diff ${base}...HEAD\`, to see what changed.
-- Choose the criteria to check: every item under \`## Acceptance criteria\`, and under \`## Manual check\` if the issue has one, that can be seen in the running app. Every other item is skipped as "not observable in the app".
-- Also check regressions: for each feature the diff touches that has a feature file, drive that file's journeys. Each journey is a criterion to check, named as the file names it.
+- Choose the criteria to check: every item under \`## Acceptance criteria\`, and under \`## Manual check\` if the issue has one, that can be seen in the running app. Every other item is skipped as "not observable in the app". For an item only partly seen in the app, check the part that is, and say in \`observed\` which part was not seen.
+- Also check regressions: for each feature the diff touches that has a feature file, drive that file's journeys. Each journey is a criterion to check, named by its sub-feature ID or step name and one short sentence, not the whole recipe. A journey the feature file does not map yet is skipped as "not mapped in the feature file".
 - Where a criterion from the issue and a journey disagree, the criterion holds: skip the journey as "changed by this issue: feature file out of date".
 - Invoke the \`${verifySkill}\` skill with the Skill tool and read its feature map. For each criterion to check, find the feature file that covers it. With none, drive with the skill's Drive commands alone, taking every element name from the live accessibility tree. Never invent a path, element name or command.
 - Before you drive: confirm, with the skill, that Launch, Doctor, a screenshot and a video recording each work.
@@ -48,7 +48,7 @@ ${JSON.stringify(manifestShape, null, 2)}
   - \`reason\` says, in one sentence, why the outcome is FAIL or INCONCLUSIVE; leave it out on PASS.
   - Each checked criterion is one \`claims\` entry, its text quoted from the issue or the feature file. \`result\` is \`met\`, \`not met\` or \`unchecked\`. \`observed\` says what the app showed. \`feature\` is the feature file you followed, or \`null\` when you drove without one.
   - \`kind\` is \`criterion\` for an item from the issue and \`regression\` for a journey from a feature file.
-  - Each skipped criterion is one \`skipped\` entry.
+  - Each skipped criterion is one \`skipped\` entry. \`why\` is one of: "not observable in the app", "changed by this issue: feature file out of date", "not mapped in the feature file".
   - Only files the manifest lists reach the PR.
 - This Sandbox is a macOS VM. The Host reads only the Evidence manifest and the files it lists, then puts them on the PR: this Sandbox has no GitHub access.
 
@@ -106,7 +106,7 @@ export function hostReads(raw: string | undefined, finalHead: string, files: rea
     return inconclusive("Evidence manifest unreadable");
   }
   if (manifest.head !== finalHead) return inconclusive(`Evidence manifest is for ${manifest.head.slice(0, 7)}, not ${finalHead.slice(0, 7)}`);
-  const listed = [...manifest.claims.flatMap((claim) => claim.screenshots), ...(manifest.video ? [manifest.video] : [])];
+  const listed = [...new Set([...manifest.claims.flatMap((claim) => claim.screenshots), ...(manifest.video ? [manifest.video] : [])])];
   const missing = listed.find((file) => !files.includes(file) || file.includes("/"));
   if (missing) return inconclusive(`listed file ${missing} not in ${evidenceFolder}`);
   const derived = manifest.claims.some((claim) => claim.result === "not met")
@@ -204,12 +204,13 @@ const samples: Record<string, { readonly manifest?: Manifest | string; readonly 
 function behaviorSection(manifest: Manifest, issue: number, verifySkill: string): string {
   const short = manifest.head.slice(0, 7);
   const label = { met: "Met", "not met": "Not met", unchecked: "Unchecked" } as const;
-  const why = manifest.outcome === "PASS" ? "" : `: ${manifest.reason}${manifest.outcome === "INCONCLUSIVE" ? ". Check the app by hand before merging" : ""}`;
+  const sentence = (text: string) => text.replace(/[.\s]+$/, "");
+  const why = manifest.outcome === "PASS" ? "" : `: ${sentence(manifest.reason ?? "")}${manifest.outcome === "INCONCLUSIVE" ? ". Check the app by hand before merging" : ""}`;
   const claims = manifest.claims.map((claim) => {
     const tag = claim.kind === "regression" ? `, regression (\`${claim.feature}\`)` : claim.feature === null ? ", no feature file, driven with the Drive commands" : "";
     return `- **${label[claim.result]}**${tag}: ${claim.criterion}\n  ${claim.observed}${claim.screenshots.map((file) => `\n  <${file}>`).join("")}`;
   });
-  const skipped = manifest.skipped.map((item) => `- ${item.criterion}${item.feature ? ` (\`${item.feature}\`)` : ""}: ${item.why}.`);
+  const skipped = manifest.skipped.map((item) => `- ${sentence(item.criterion)}${item.feature ? ` (\`${item.feature}\`)` : ""}: ${item.why}.`);
   return [
     `Behavior check: ${manifest.outcome} on \`${short}\`${why}, by the AFK loop's Verifier in the Sandbox with \`${verifySkill}\`. Its log on the Host: \`.sandcastle/logs/issue-${issue}-verifier.log\`.`,
     claims.join("\n"),

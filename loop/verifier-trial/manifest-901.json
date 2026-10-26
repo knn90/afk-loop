@@ -1,0 +1,41 @@
+{
+  "outcome": "FAIL",
+  "head": "24ffe713910df0e14c932db102c8d476e40618db",
+  "reason": "The debug build crashes at launch on a fresh simulator (EXC_BREAKPOINT in DailyQuestApp.init() at DailyQuestApp.swift:13, a force unwrap of a 'Weekly review' lookup in DebugSeed.extraTitles, which holds only 'Daily review'), so Today never appears.",
+  "claims": [
+    {
+      "kind": "criterion",
+      "criterion": "On a fresh simulator, Today lists `Weekly review`, not completed, beside the seeded `Meditate`.",
+      "result": "not met",
+      "observed": "On a fresh simulator, `dq launch` reported 'the notification alert never came up' and `dq doctor` showed app_running:false and tree_readable:false. The app crashed twice, once at launch and once on `dq relaunch`. Both crash reports show EXC_BREAKPOINT (SIGTRAP), Swift _assertionFailure in DailyQuestApp.init() at DailyQuestApp.swift:13. Today never appeared and the screen shows the home screen.",
+      "screenshots": ["crash-at-launch.png"],
+      "feature": null
+    },
+    {
+      "kind": "criterion",
+      "criterion": "Today's progress reads `1 of 2 marked`.",
+      "result": "not met",
+      "observed": "The app crashes in DailyQuestApp.init() before any UI appears, so Today has no progress line. `dq tree` returned 'error: app not in foreground (state 1)'.",
+      "screenshots": ["crash-at-launch.png"],
+      "feature": null
+    }
+  ],
+  "skipped": [
+    {
+      "kind": "regression",
+      "criterion": "Undo. Run `scripts/dq tap \"Meditate, completed\"`. `scripts/dq value \"Today's progress\"` → `Today's progress = 0 of 1 marked`.",
+      "why": "changed by this issue: feature file out of date"
+    },
+    {
+      "kind": "regression",
+      "criterion": "Persist. Run `scripts/dq relaunch`. `scripts/dq value \"Meditate\"` → `Meditate, not completed`, and progress is still `0 of 1 marked`.",
+      "why": "changed by this issue: feature file out of date"
+    },
+    {
+      "kind": "regression",
+      "criterion": "Done. Run `scripts/dq tap \"Meditate, not completed\"`. Progress → `All 1 marked`, and `Edit Meditate, streak 18` is back.",
+      "why": "changed by this issue: feature file out of date"
+    }
+  ],
+  "video": "run.mp4"
+}

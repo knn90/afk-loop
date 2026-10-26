@@ -1,0 +1,73 @@
+{
+  "outcome": "FAIL",
+  "head": "1f807804afc1fb567ee972c82319afb6aaf2fef6",
+  "reason": "With the title \"Discard me\" typed on New Task, Cancel closed the sheet at once and never showed \"Discard this task?\"; the branch only adds the three strings to ChecklistItemCopy, and no code uses them.",
+  "claims": [
+    {
+      "kind": "criterion",
+      "criterion": "On `New Task` with a title typed, tapping Cancel shows \"Discard this task?\" with `Discard` and `Keep editing`; the sheet stays open until one is chosen.",
+      "result": "not met",
+      "observed": "With the title \"Discard me\" typed (tree: TextField value \"Discard me\"), `dq tap Cancel` closed the sheet straight away. `dq alert` returned \"alert: none\", the tree showed Today with no \"Discard this task?\", Discard or Keep editing, and Today's progress stayed \"All 1 marked\".",
+      "screenshots": ["sheet-titled.png", "after-cancel-titled.png"],
+      "feature": "add-task.md"
+    },
+    {
+      "kind": "criterion",
+      "criterion": "`Keep editing` returns to the sheet with the title kept; `Discard` closes the sheet and adds nothing to Today.",
+      "result": "unchecked",
+      "observed": "Could not be reached: Cancel never shows the confirmation, so the app has no `Keep editing` or `Discard` button to tap. The draft was thrown away without a prompt and nothing was added to Today (\"All 1 marked\").",
+      "screenshots": ["after-cancel-titled.png"],
+      "feature": "add-task.md"
+    },
+    {
+      "kind": "criterion",
+      "criterion": "With an empty title, Cancel closes the sheet at once, as today.",
+      "result": "met",
+      "observed": "Opened New Task with the title empty and tapped Cancel: the sheet closed at once with no prompt, and Today was showing.",
+      "screenshots": ["sheet-empty.png", "after-cancel-empty.png"],
+      "feature": "add-task.md"
+    },
+    {
+      "kind": "regression",
+      "criterion": "`add-validate` with an empty title, Save keeps the sheet open and shows `Give the task a title.`",
+      "result": "met",
+      "observed": "After Save with an empty title, `New Task` and `Give the task a title.` were still in the tree.",
+      "screenshots": ["validate-stays.png"],
+      "feature": "add-task.md"
+    },
+    {
+      "kind": "regression",
+      "criterion": "`add-save` a titled task appears on Today and in the progress count",
+      "result": "met",
+      "observed": "After typing \"Drink water\" and tapping Save, Today showed `Drink water, not completed`, and Today's progress changed from \"All 1 marked\" to \"1 of 2 marked\".",
+      "screenshots": ["after-save.png"],
+      "feature": "add-task.md"
+    },
+    {
+      "kind": "regression",
+      "criterion": "`add-persist` the new task survives relaunch",
+      "result": "met",
+      "observed": "After `dq relaunch`, `dq value \"Drink water\"` returned `Drink water, not completed`.",
+      "screenshots": ["after-relaunch.png"],
+      "feature": "add-task.md"
+    }
+  ],
+  "skipped": [
+    {
+      "kind": "criterion",
+      "criterion": "`ChecklistItemCopy` holds the three new strings, with tests.",
+      "why": "not observable in the app"
+    },
+    {
+      "kind": "regression",
+      "criterion": "`add-cancel` Cancel closes the sheet and adds nothing",
+      "why": "changed by this issue: feature file out of date"
+    },
+    {
+      "kind": "regression",
+      "criterion": "`add-schedule` / `add-reminder` the `Every day` and `Remind me` switches. *Not mapped yet: tapping the switch's label does not toggle it (see Gotchas).*",
+      "why": "not observable in the app: the feature file has no way to drive these switches yet"
+    }
+  ],
+  "video": "run.mp4"
+}

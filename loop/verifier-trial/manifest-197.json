@@ -1,0 +1,75 @@
+{
+  "outcome": "PASS",
+  "head": "24cb589e6288f103398a948f7684e8cb17c1c3b6",
+  "claims": [
+    {
+      "kind": "criterion",
+      "criterion": "Onboarding shows the confirmed strings; no user-facing \"habit\" remains in the app.",
+      "result": "met",
+      "observed": "The welcome step shows 'Small tasks, done daily' and 'A short list you check off every day. Start with a few tasks that matter to you.' The picker shows 'Pick your first tasks'. The reminder step shows 'Reminders help you show up at the right moment. We'll only nudge you for the tasks you chose.' The accessibility trees of Onboarding, Today, New Task and Edit Task contain no 'habit'. The save-failure message ('Something went wrong saving your tasks. Please try again.') only appears after a failed save, which the UI cannot trigger, so it was not seen in the app.",
+      "screenshots": ["welcome.png", "picked.png", "reminders.png", "today.png", "add-task.png", "meditate-detail.png"],
+      "feature": "onboarding.md"
+    },
+    {
+      "kind": "criterion",
+      "criterion": "Starter task catalog, step order and behaviour unchanged.",
+      "result": "met",
+      "observed": "Steps run welcome → picker → reminder step → Today. The picker lists the same 10 starters: Read, Walk 10 min, Meditate 2 min, Journal 1 line, Push-ups, Drink water, Stretch, Language practice, Tidy 5 min, Gratitude. A picked starter gains 'Image | Selected'. Back returns one step at a time and keeps the picks. After finishing, Today lists Stretch at 6:00 PM and Read at 9:00 PM, both not completed.",
+      "screenshots": ["picked.png", "reminders.png", "today.png"],
+      "feature": "onboarding.md"
+    },
+    {
+      "kind": "regression",
+      "criterion": "Welcome. The tree shows `StaticText | Small tasks, done daily`. Run `scripts/dq tap Continue`.",
+      "result": "met",
+      "observed": "The tree shows 'StaticText | Small tasks, done daily'. Continue moved to the picker. The first Continue tap, right after launch, did not advance; the second did, and on a later visit via Back one tap advanced, so the miss looks like launch timing.",
+      "screenshots": ["welcome.png"],
+      "feature": "onboarding.md"
+    },
+    {
+      "kind": "regression",
+      "criterion": "Pick. The tree shows `StaticText | Pick your first tasks`. Run `scripts/dq tap Read` and `scripts/dq tap Stretch`. Each picked starter gains an `Image | Selected` after its `StaticText`. Run `scripts/dq tap Continue`.",
+      "result": "met",
+      "observed": "The tree shows 'StaticText | Pick your first tasks'. After tapping Read and Stretch, each has 'Image | Selected' after its StaticText. Continue moved to the reminder step.",
+      "screenshots": ["picked.png"],
+      "feature": "onboarding.md"
+    },
+    {
+      "kind": "regression",
+      "criterion": "Reminders. The tree shows `StaticText | A gentle nudge?`. Run `scripts/dq tap \"Maybe later\"`.",
+      "result": "met",
+      "observed": "The tree shows 'StaticText | A gentle nudge?', 'Allow reminders', 'Maybe later' and 'Back'. 'Maybe later' moved to Today.",
+      "screenshots": ["reminders.png"],
+      "feature": "onboarding.md"
+    },
+    {
+      "kind": "regression",
+      "criterion": "Finish. The system notification alert comes up over Today [...] Today lists `Stretch, at 18:00, not completed` and `Read, at 21:00, not completed`; `scripts/dq value \"Today's progress\"` → `Today's progress = 1 of 3 marked`.",
+      "result": "met",
+      "observed": "`dq alert` printed 'alert: none', but `dq alert-tap Allow` printed 'tapped alert: Allow', and doctor afterwards reported no_alert true. Today lists 'Stretch, at 6:00 PM, not completed' and 'Read, at 9:00 PM, not completed' (the same times in the simulator's 12-hour format) plus 'Meditate, completed'. `dq value \"Today's progress\"` returned 'Today's progress = 1 of 3 marked'.",
+      "screenshots": ["today.png"],
+      "feature": "onboarding.md"
+    },
+    {
+      "kind": "regression",
+      "criterion": "Persist. Run `scripts/dq relaunch`. The app opens on Today, not Onboarding, with the same progress.",
+      "result": "met",
+      "observed": "After relaunch the app opens on Today (doctor reports on_today true). `dq value \"Today's progress\"` returned 'Today's progress = 1 of 3 marked'.",
+      "screenshots": ["today-relaunch.png"],
+      "feature": "onboarding.md"
+    }
+  ],
+  "skipped": [
+    {
+      "kind": "criterion",
+      "criterion": "All onboarding copy lives in `OnboardingCopy`, with tests on the five task-bearing strings.",
+      "why": "not observable in the app"
+    },
+    {
+      "kind": "criterion",
+      "criterion": "`PRODUCT.md` no longer says onboarding copy is deferred.",
+      "why": "not observable in the app"
+    }
+  ],
+  "video": "run.mp4"
+}
