@@ -79,11 +79,19 @@ Returning an issue to the maintainer as `ready-for-human` when the Attempt budge
 _Avoid_: failure, abort
 
 **Verifier**:
-The Sandbox agent that drives the running app at the PR's commit, in a fresh session after the Reviewer's last run, and reports PASS, FAIL or INCONCLUSIVE. It reads the issue, the diff and the project's verify skill, never the other agents' output, and commits nothing.
+The Sandbox agent that drives the running app at the PR's commit, in a fresh session after the Reviewer's last run, and reports PASS, FAIL or INCONCLUSIVE. It reads the issue, the diff and the project's Verify skill, never the other agents' output, and commits nothing.
 _Avoid_: QA agent, judge
 
+**Verify skill**:
+The project's skill, named by its Platform, that tells an agent how to launch, check, drive and capture the running app, with one feature file per feature it covers. A human makes it once per project; the Verifier uses the base branch's copy, never the branch's.
+_Avoid_: verification skill, QA skill
+
+**Feature file**:
+The Verify skill's recipe for one feature: how a user reaches it, how to drive it, and the journeys that prove it works. Only the base branch's copy counts; a PR never updates one.
+_Avoid_: feature map entry, recipe
+
 **Behavior check**:
-The Verifier's run. Only a branch changing a Platform that names a verify skill has one.
+The Verifier's run. Only a branch changing a Platform that names a Verify skill has one.
 _Avoid_: verification run, QA
 
 **Behavior evidence**:
