@@ -20,6 +20,10 @@ _Avoid_: agent env
 An open `ready-for-agent` issue with no open blocker, no linked open PR and no pushed Issue branch.
 _Avoid_: candidate, ticket, task
 
+**Acceptance criteria**:
+The issue's `## Acceptance criteria` section: at least one item stating what must be true when the issue is done. Every issue the loop works needs one.
+_Avoid_: Done when, definition of done, AC
+
 **Issue branch**:
 The `issue/<n>-<slug>` branch an issue's work is built on. It starts at the base branch's latest commit each time the issue is started.
 _Avoid_: feature branch, work branch
@@ -71,7 +75,7 @@ The 3 failed Attempts an issue may spend, shared by the Implementer's first roun
 _Avoid_: retries, max tries
 
 **Handoff**:
-Returning an issue to the maintainer as `ready-for-human` when the Attempt budget runs out in the Implementer's first round, the Implementer makes no commits, or it finds a Contradiction in the issue. The Fix round never ends in one. A Handoff does not end the run.
+Returning an issue to the maintainer as `ready-for-human` when the Attempt budget runs out in the Implementer's first round, the Implementer makes no commits, it finds a Contradiction in the issue, or the issue has no Acceptance criteria. The Fix round never ends in one. A Handoff does not end the run.
 _Avoid_: failure, abort
 
 **Verifier**:
