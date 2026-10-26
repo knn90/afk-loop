@@ -23,16 +23,17 @@ ${issueBlock(issue)}
 
 How to work:
 
+- The Host restored the \`${verifySkill}\` skill from \`${base}\` before your run, so it may differ from the branch's copy. Use it as it is.
 - You change no tracked file and commit nothing; you may write outside the repo. After your run the Host checks HEAD is \`${head}\` and \`git status\` is clean; if not, the Behavior check is INCONCLUSIVE whatever you report.
 - ${glossaryRule}
 - Read the branch diff, \`git diff ${base}...HEAD\`, to see what changed.
 - Choose the criteria to check: every item under \`## Acceptance criteria\`, and under \`## Manual check\` if the issue has one, that can be seen in the running app. Every other item is skipped as "not observable in the app".
-- Read the \`${verifySkill}\` skill and its feature map. For each criterion to check, find the feature file that covers it. Never invent a path, element id or command the skill does not give.
+- Invoke the \`${verifySkill}\` skill with the Skill tool and read its feature map. For each criterion to check, find the feature file that covers it. With none, drive with the skill's Drive commands alone, taking every element name from the live accessibility tree. Never invent a path, element name or command.
 - Before you drive: confirm, with the skill, that Launch, Doctor, a screenshot and a video recording each work.
 - Drive the app through each criterion as its feature file says. For each, take at least one screenshot that shows the result. Record at most one video, at most ${videoCapMb} MB.
 - The outcome:
-  - FAIL: the app shows a checked criterion is not met, or the app crashes while you drive it. FAIL holds even if other criteria could not be checked.
-  - INCONCLUSIVE: a step before driving does not work, no feature file covers a criterion, or you could not finish checking one. Stop at the first such step.
+  - FAIL: the app shows a checked criterion is not met, or the app crashes, at Launch or later. FAIL holds even if other criteria could not be checked.
+  - INCONCLUSIVE: a step before driving does not work without the app crashing, or you could not reach or finish checking a criterion. Say the command you tried. Stop at the first such step.
   - PASS: every checked criterion is met, each with a screenshot.
   - With no criterion observable in the app, the outcome is INCONCLUSIVE.
 - Evidence: copy the screenshots and video you choose into \`${evidenceFolder}/\`, flat, as \`.png\` and \`.mp4\`. The Host emptied it before your run. Then write \`${evidenceFolder}/manifest.json\`, the Evidence manifest, in this shape:
@@ -43,7 +44,7 @@ ${JSON.stringify(manifestShape, null, 2)}
 
   - \`head\` is \`git rev-parse HEAD\`.
   - \`reason\` says, in one sentence, why the outcome is FAIL or INCONCLUSIVE; leave it out on PASS.
-  - Each checked criterion is one \`claims\` entry, its text quoted from the issue. \`result\` is \`met\`, \`not met\` or \`unchecked\`. \`observed\` says what the app showed.
+  - Each checked criterion is one \`claims\` entry, its text quoted from the issue. \`result\` is \`met\`, \`not met\` or \`unchecked\`. \`observed\` says what the app showed. \`feature\` is the feature file you followed, or \`null\` when you drove without one.
   - Each skipped criterion is one \`skipped\` entry.
   - Only files the manifest lists reach the PR.
 - This Sandbox is a macOS VM. The Host reads only the Evidence manifest and the files it lists, then puts them on the PR: this Sandbox has no GitHub access.
@@ -58,6 +59,7 @@ interface Claim {
   readonly result: Result;
   readonly observed: string;
   readonly screenshots: readonly string[];
+  readonly feature: string | null;
 }
 
 interface Manifest {
@@ -73,7 +75,7 @@ const manifestShape: Manifest = {
   outcome: "PASS",
   head: "<full commit SHA>",
   reason: "<FAIL or INCONCLUSIVE only>",
-  claims: [{ criterion: "<quoted from the issue>", result: "met", observed: "<what the app showed>", screenshots: ["<name>.png"] }],
+  claims: [{ criterion: "<quoted from the issue>", result: "met", observed: "<what the app showed>", screenshots: ["<name>.png"], feature: "<feature file>.md or null" }],
   skipped: [{ criterion: "<quoted from the issue>", why: "not observable in the app" }],
   video: "<name>.mp4",
 };
@@ -82,6 +84,7 @@ interface HostReading {
   readonly outcome: Manifest["outcome"];
   readonly reason?: string;
   readonly attach: readonly string[];
+  readonly notes?: readonly string[];
 }
 
 function inconclusive(reason: string): HostReading {
@@ -105,9 +108,10 @@ export function hostReads(raw: string | undefined, finalHead: string, files: rea
     : manifest.claims.length === 0 || manifest.claims.some((claim) => claim.result === "unchecked" || claim.screenshots.length === 0)
       ? "INCONCLUSIVE"
       : "PASS";
-  if (derived !== manifest.outcome) return inconclusive(`Evidence manifest says ${manifest.outcome}, its claims say ${derived}`);
   const attach = listed.filter((file) => file !== manifest.video || videoMb <= videoCapMb);
-  return { outcome: manifest.outcome, ...(manifest.reason ? { reason: manifest.reason } : {}), attach };
+  const notes = manifest.claims.filter((claim) => claim.feature === null).map((claim) => `${claim.criterion}: no feature file; driven with the Drive commands`);
+  if (derived !== manifest.outcome) return { outcome: "INCONCLUSIVE", reason: `Evidence manifest says ${manifest.outcome}, its claims say ${derived}`, attach, notes };
+  return { outcome: manifest.outcome, ...(manifest.reason ? { reason: manifest.reason } : {}), attach, notes };
 }
 
 const head = "4f1c2a9e0b7d3c5a6e8f9012345678abcdef0123";
@@ -141,10 +145,10 @@ const samples: Record<string, { readonly manifest?: Manifest | string; readonly 
       outcome: "PASS",
       head,
       claims: [
-        { criterion: "Tapping + on Today opens the Add Task sheet with the name field focused", result: "met", observed: "Sheet opened, keyboard up, cursor in Name.", screenshots: ["add-sheet-open.png"] },
-        { criterion: "Saving a non-empty name adds the Task to the bottom of today's list", result: "met", observed: "\"Drink water\" appeared as the 4th and last row.", screenshots: ["task-added.png"] },
-        { criterion: "Save is disabled while the name is empty", result: "met", observed: "Save greyed out with an empty field and with spaces only.", screenshots: ["save-disabled.png"] },
-        { criterion: "Add \"Drink water\", kill and relaunch the app: the Task is still there", result: "met", observed: "Row still present after relaunch.", screenshots: ["after-relaunch.png"] },
+        { criterion: "Tapping + on Today opens the Add Task sheet with the name field focused", result: "met", observed: "Sheet opened, keyboard up, cursor in Name.", screenshots: ["add-sheet-open.png"], feature: "add-task.md" },
+        { criterion: "Saving a non-empty name adds the Task to the bottom of today's list", result: "met", observed: "\"Drink water\" appeared as the 4th and last row.", screenshots: ["task-added.png"], feature: "add-task.md" },
+        { criterion: "Save is disabled while the name is empty", result: "met", observed: "Save greyed out with an empty field and with spaces only.", screenshots: ["save-disabled.png"], feature: null },
+        { criterion: "Add \"Drink water\", kill and relaunch the app: the Task is still there", result: "met", observed: "Row still present after relaunch.", screenshots: ["after-relaunch.png"], feature: "add-task.md" },
       ],
       skipped: [{ criterion: "TaskStore.add has unit tests for empty and whitespace names", why: "not observable in the app" }],
       video: "drive.mp4",
@@ -158,8 +162,8 @@ const samples: Record<string, { readonly manifest?: Manifest | string; readonly 
       head,
       reason: "New Task lands at the top of today's list, not the bottom.",
       claims: [
-        { criterion: "Tapping + on Today opens the Add Task sheet with the name field focused", result: "met", observed: "Sheet opened, keyboard up.", screenshots: ["add-sheet-open.png"] },
-        { criterion: "Saving a non-empty name adds the Task to the bottom of today's list", result: "not met", observed: "\"Drink water\" appeared as the 1st row.", screenshots: ["task-added-top.png"] },
+        { criterion: "Tapping + on Today opens the Add Task sheet with the name field focused", result: "met", observed: "Sheet opened, keyboard up.", screenshots: ["add-sheet-open.png"], feature: "add-task.md" },
+        { criterion: "Saving a non-empty name adds the Task to the bottom of today's list", result: "not met", observed: "\"Drink water\" appeared as the 1st row.", screenshots: ["task-added-top.png"], feature: "add-task.md" },
       ],
       skipped: [],
       video: "drive.mp4",
@@ -177,8 +181,8 @@ const samples: Record<string, { readonly manifest?: Manifest | string; readonly 
       outcome: "PASS",
       head,
       claims: [
-        { criterion: "Tapping + on Today opens the Add Task sheet with the name field focused", result: "met", observed: "Sheet opened.", screenshots: ["add-sheet-open.png"] },
-        { criterion: "Save is disabled while the name is empty", result: "unchecked", observed: "No feature file covers the Save button.", screenshots: [] },
+        { criterion: "Tapping + on Today opens the Add Task sheet with the name field focused", result: "met", observed: "Sheet opened.", screenshots: ["add-sheet-open.png"], feature: "add-task.md" },
+        { criterion: "Save is disabled while the name is empty", result: "unchecked", observed: "Save button not in the accessibility tree (dq tap \"Save\" timed out).", screenshots: [], feature: null },
       ],
       skipped: [],
     },
