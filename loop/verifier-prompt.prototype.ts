@@ -47,6 +47,7 @@ ${JSON.stringify(manifestShape, null, 2)}
   - \`head\` is \`git rev-parse HEAD\`.
   - \`reason\` says, in one sentence, why the outcome is FAIL or INCONCLUSIVE; leave it out on PASS.
   - Each checked criterion is one \`claims\` entry, its text quoted from the issue or the feature file. \`result\` is \`met\`, \`not met\` or \`unchecked\`. \`observed\` says what the app showed. \`feature\` is the feature file you followed, or \`null\` when you drove without one.
+  - \`kind\` is \`criterion\` for an item from the issue and \`regression\` for a journey from a feature file.
   - Each skipped criterion is one \`skipped\` entry.
   - Only files the manifest lists reach the PR.
 - This Sandbox is a macOS VM. The Host reads only the Evidence manifest and the files it lists, then puts them on the PR: this Sandbox has no GitHub access.
@@ -56,7 +57,10 @@ Done means \`${evidenceFolder}/manifest.json\` holds the outcome and every crite
 
 type Result = "met" | "not met" | "unchecked";
 
+type Kind = "criterion" | "regression";
+
 interface Claim {
+  readonly kind: Kind;
   readonly criterion: string;
   readonly result: Result;
   readonly observed: string;
@@ -69,7 +73,7 @@ interface Manifest {
   readonly head: string;
   readonly reason?: string;
   readonly claims: readonly Claim[];
-  readonly skipped: readonly { readonly criterion: string; readonly why: string }[];
+  readonly skipped: readonly { readonly kind: Kind; readonly criterion: string; readonly why: string; readonly feature?: string }[];
   readonly video?: string;
 }
 
@@ -77,8 +81,8 @@ const manifestShape: Manifest = {
   outcome: "PASS",
   head: "<full commit SHA>",
   reason: "<FAIL or INCONCLUSIVE only>",
-  claims: [{ criterion: "<quoted from the issue>", result: "met", observed: "<what the app showed>", screenshots: ["<name>.png"], feature: "<feature file>.md or null" }],
-  skipped: [{ criterion: "<quoted from the issue or the feature file>", why: "not observable in the app" }],
+  claims: [{ kind: "criterion", criterion: "<quoted from the issue>", result: "met", observed: "<what the app showed>", screenshots: ["<name>.png"], feature: "<feature file>.md or null" }],
+  skipped: [{ kind: "regression", criterion: "<quoted from the issue or the feature file>", why: "not observable in the app" }],
   video: "<name>.mp4",
 };
 
@@ -147,15 +151,15 @@ const samples: Record<string, { readonly manifest?: Manifest | string; readonly 
       outcome: "PASS",
       head,
       claims: [
-        { criterion: "Tapping + on Today opens the Add Task sheet with the name field focused", result: "met", observed: "Sheet opened, keyboard up, cursor in Name.", screenshots: ["add-sheet-open.png"], feature: "add-task.md" },
-        { criterion: "Saving a non-empty name adds the Task to the bottom of today's list", result: "met", observed: "\"Drink water\" appeared as the 4th and last row.", screenshots: ["task-added.png"], feature: "add-task.md" },
-        { criterion: "Save is disabled while the name is empty", result: "met", observed: "Save greyed out with an empty field and with spaces only.", screenshots: ["save-disabled.png"], feature: null },
-        { criterion: "Today: check off Meditate, the progress reads All 1 marked", result: "met", observed: "Today's progress = All 1 marked.", screenshots: ["check-off.png"], feature: "today-check-off.md" },
-        { criterion: "Add \"Drink water\", kill and relaunch the app: the Task is still there", result: "met", observed: "Row still present after relaunch.", screenshots: ["after-relaunch.png"], feature: "add-task.md" },
+        { kind: "criterion", criterion: "Tapping + on Today opens the Add Task sheet with the name field focused", result: "met", observed: "Sheet opened, keyboard up, cursor in Name.", screenshots: ["add-sheet-open.png"], feature: "add-task.md" },
+        { kind: "criterion", criterion: "Saving a non-empty name adds the Task to the bottom of today's list", result: "met", observed: "\"Drink water\" appeared as the 4th and last row.", screenshots: ["task-added.png"], feature: "add-task.md" },
+        { kind: "criterion", criterion: "Save is disabled while the name is empty", result: "met", observed: "Save greyed out with an empty field and with spaces only.", screenshots: ["save-disabled.png"], feature: null },
+        { kind: "regression", criterion: "Today: check off Meditate, the progress reads All 1 marked", result: "met", observed: "Today's progress = All 1 marked.", screenshots: ["check-off.png"], feature: "today-check-off.md" },
+        { kind: "criterion", criterion: "Add \"Drink water\", kill and relaunch the app: the Task is still there", result: "met", observed: "Row still present after relaunch.", screenshots: ["after-relaunch.png"], feature: "add-task.md" },
       ],
       skipped: [
-        { criterion: "TaskStore.add has unit tests for empty and whitespace names", why: "not observable in the app" },
-        { criterion: "Today: new Task appears at the top of the list", why: "changed by this issue: feature file out of date" },
+        { kind: "criterion", criterion: "TaskStore.add has unit tests for empty and whitespace names", why: "not observable in the app" },
+        { kind: "regression", criterion: "Today: new Task appears at the top of the list", why: "changed by this issue, feature file out of date", feature: "today-check-off.md" },
       ],
       video: "drive.mp4",
     },
@@ -168,8 +172,8 @@ const samples: Record<string, { readonly manifest?: Manifest | string; readonly 
       head,
       reason: "New Task lands at the top of today's list, not the bottom.",
       claims: [
-        { criterion: "Tapping + on Today opens the Add Task sheet with the name field focused", result: "met", observed: "Sheet opened, keyboard up.", screenshots: ["add-sheet-open.png"], feature: "add-task.md" },
-        { criterion: "Saving a non-empty name adds the Task to the bottom of today's list", result: "not met", observed: "\"Drink water\" appeared as the 1st row.", screenshots: ["task-added-top.png"], feature: "add-task.md" },
+        { kind: "criterion", criterion: "Tapping + on Today opens the Add Task sheet with the name field focused", result: "met", observed: "Sheet opened, keyboard up.", screenshots: ["add-sheet-open.png"], feature: "add-task.md" },
+        { kind: "criterion", criterion: "Saving a non-empty name adds the Task to the bottom of today's list", result: "not met", observed: "\"Drink water\" appeared as the 1st row.", screenshots: ["task-added-top.png"], feature: "add-task.md" },
       ],
       skipped: [],
       video: "drive.mp4",
@@ -187,8 +191,8 @@ const samples: Record<string, { readonly manifest?: Manifest | string; readonly 
       outcome: "PASS",
       head,
       claims: [
-        { criterion: "Tapping + on Today opens the Add Task sheet with the name field focused", result: "met", observed: "Sheet opened.", screenshots: ["add-sheet-open.png"], feature: "add-task.md" },
-        { criterion: "Save is disabled while the name is empty", result: "unchecked", observed: "Save button not in the accessibility tree (dq tap \"Save\" timed out).", screenshots: [], feature: null },
+        { kind: "criterion", criterion: "Tapping + on Today opens the Add Task sheet with the name field focused", result: "met", observed: "Sheet opened.", screenshots: ["add-sheet-open.png"], feature: "add-task.md" },
+        { kind: "criterion", criterion: "Save is disabled while the name is empty", result: "unchecked", observed: "Save button not in the accessibility tree (dq tap \"Save\" timed out).", screenshots: [], feature: null },
       ],
       skipped: [],
     },
@@ -197,6 +201,23 @@ const samples: Record<string, { readonly manifest?: Manifest | string; readonly 
   "no manifest": { files: [], videoMb: 0 },
 };
 
+function behaviorSection(manifest: Manifest, issue: number, verifySkill: string): string {
+  const short = manifest.head.slice(0, 7);
+  const label = { met: "Met", "not met": "Not met", unchecked: "Unchecked" } as const;
+  const why = manifest.outcome === "PASS" ? "" : `: ${manifest.reason}${manifest.outcome === "INCONCLUSIVE" ? ". Check the app by hand before merging" : ""}`;
+  const claims = manifest.claims.map((claim) => {
+    const tag = claim.kind === "regression" ? `, regression (\`${claim.feature}\`)` : claim.feature === null ? ", no feature file, driven with the Drive commands" : "";
+    return `- **${label[claim.result]}**${tag}: ${claim.criterion}\n  ${claim.observed}${claim.screenshots.map((file) => `\n  <${file}>`).join("")}`;
+  });
+  const skipped = manifest.skipped.map((item) => `- ${item.criterion}${item.feature ? ` (\`${item.feature}\`)` : ""}: ${item.why}.`);
+  return [
+    `Behavior check: ${manifest.outcome} on \`${short}\`${why}, by the AFK loop's Verifier in the Sandbox with \`${verifySkill}\`. Its log on the Host: \`.sandcastle/logs/issue-${issue}-verifier.log\`.`,
+    claims.join("\n"),
+    ...(skipped.length ? [`Not checked:\n${skipped.join("\n")}`] : []),
+    ...(manifest.video ? [`Video of the drive: <${manifest.video}>`] : []),
+  ].join("\n\n");
+}
+
 console.log("=".repeat(30), "VERIFIER PROMPT", "=".repeat(30));
 console.log(verifierPrompt({ repo: "knn90/DailyQuest", issue: sampleIssue, branch: "afk/212-add-task", base: "main", head, verifySkill: "verify-dailyquest" }));
 for (const [name, { manifest, files, videoMb }] of Object.entries(samples)) {
@@ -204,3 +225,5 @@ for (const [name, { manifest, files, videoMb }] of Object.entries(samples)) {
   console.log(`\n${"=".repeat(30)} HOST READS: ${name} ${"=".repeat(30)}`);
   console.log(JSON.stringify(hostReads(raw, head, files, videoMb), null, 2));
 }
+console.log(`\n${"=".repeat(30)} PR SECTION: PASS ${"=".repeat(30)}`);
+console.log(behaviorSection(samples["PASS"]!.manifest as Manifest, 212, "verify-dailyquest"));
