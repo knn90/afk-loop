@@ -28,6 +28,8 @@ How to work:
 - ${glossaryRule}
 - Read the branch diff, \`git diff ${base}...HEAD\`, to see what changed.
 - Choose the criteria to check: every item under \`## Acceptance criteria\`, and under \`## Manual check\` if the issue has one, that can be seen in the running app. Every other item is skipped as "not observable in the app".
+- Also check regressions: for each feature the diff touches that has a feature file, drive that file's journeys. Each journey is a criterion to check, named as the file names it.
+- Where a criterion from the issue and a journey disagree, the criterion holds: skip the journey as "changed by this issue: feature file out of date".
 - Invoke the \`${verifySkill}\` skill with the Skill tool and read its feature map. For each criterion to check, find the feature file that covers it. With none, drive with the skill's Drive commands alone, taking every element name from the live accessibility tree. Never invent a path, element name or command.
 - Before you drive: confirm, with the skill, that Launch, Doctor, a screenshot and a video recording each work.
 - Drive the app through each criterion as its feature file says. For each, take at least one screenshot that shows the result. Record at most one video, at most ${videoCapMb} MB.
@@ -44,7 +46,7 @@ ${JSON.stringify(manifestShape, null, 2)}
 
   - \`head\` is \`git rev-parse HEAD\`.
   - \`reason\` says, in one sentence, why the outcome is FAIL or INCONCLUSIVE; leave it out on PASS.
-  - Each checked criterion is one \`claims\` entry, its text quoted from the issue. \`result\` is \`met\`, \`not met\` or \`unchecked\`. \`observed\` says what the app showed. \`feature\` is the feature file you followed, or \`null\` when you drove without one.
+  - Each checked criterion is one \`claims\` entry, its text quoted from the issue or the feature file. \`result\` is \`met\`, \`not met\` or \`unchecked\`. \`observed\` says what the app showed. \`feature\` is the feature file you followed, or \`null\` when you drove without one.
   - Each skipped criterion is one \`skipped\` entry.
   - Only files the manifest lists reach the PR.
 - This Sandbox is a macOS VM. The Host reads only the Evidence manifest and the files it lists, then puts them on the PR: this Sandbox has no GitHub access.
@@ -76,7 +78,7 @@ const manifestShape: Manifest = {
   head: "<full commit SHA>",
   reason: "<FAIL or INCONCLUSIVE only>",
   claims: [{ criterion: "<quoted from the issue>", result: "met", observed: "<what the app showed>", screenshots: ["<name>.png"], feature: "<feature file>.md or null" }],
-  skipped: [{ criterion: "<quoted from the issue>", why: "not observable in the app" }],
+  skipped: [{ criterion: "<quoted from the issue or the feature file>", why: "not observable in the app" }],
   video: "<name>.mp4",
 };
 
@@ -139,7 +141,7 @@ A + button on Today opens a sheet to name a new Task; saving adds it to today's 
 
 const samples: Record<string, { readonly manifest?: Manifest | string; readonly files: readonly string[]; readonly videoMb: number }> = {
   "PASS": {
-    files: ["add-sheet-open.png", "task-added.png", "save-disabled.png", "after-relaunch.png", "drive.mp4"],
+    files: ["add-sheet-open.png", "task-added.png", "save-disabled.png", "check-off.png", "after-relaunch.png", "drive.mp4"],
     videoMb: 6.2,
     manifest: {
       outcome: "PASS",
@@ -148,9 +150,13 @@ const samples: Record<string, { readonly manifest?: Manifest | string; readonly 
         { criterion: "Tapping + on Today opens the Add Task sheet with the name field focused", result: "met", observed: "Sheet opened, keyboard up, cursor in Name.", screenshots: ["add-sheet-open.png"], feature: "add-task.md" },
         { criterion: "Saving a non-empty name adds the Task to the bottom of today's list", result: "met", observed: "\"Drink water\" appeared as the 4th and last row.", screenshots: ["task-added.png"], feature: "add-task.md" },
         { criterion: "Save is disabled while the name is empty", result: "met", observed: "Save greyed out with an empty field and with spaces only.", screenshots: ["save-disabled.png"], feature: null },
+        { criterion: "Today: check off Meditate, the progress reads All 1 marked", result: "met", observed: "Today's progress = All 1 marked.", screenshots: ["check-off.png"], feature: "today-check-off.md" },
         { criterion: "Add \"Drink water\", kill and relaunch the app: the Task is still there", result: "met", observed: "Row still present after relaunch.", screenshots: ["after-relaunch.png"], feature: "add-task.md" },
       ],
-      skipped: [{ criterion: "TaskStore.add has unit tests for empty and whitespace names", why: "not observable in the app" }],
+      skipped: [
+        { criterion: "TaskStore.add has unit tests for empty and whitespace names", why: "not observable in the app" },
+        { criterion: "Today: new Task appears at the top of the list", why: "changed by this issue: feature file out of date" },
+      ],
       video: "drive.mp4",
     },
   },
