@@ -1,8 +1,8 @@
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { createReadStream, createWriteStream, existsSync, statSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { pipeline } from "node:stream/promises";
 import { createIsolatedSandboxProvider, type ExecResult, type IsolatedSandboxHandle, type SandboxExecOptions } from "@ai-hero/sandcastle";
@@ -12,6 +12,7 @@ import { check } from "./host.js";
 const localTart = `${homedir()}/.local/bin/tart`;
 export const tartBin = existsSync(localTart) ? localTart : "tart";
 export const guestRepo = "/Users/admin/workspace";
+const guestUser = basename(dirname(guestRepo));
 export const timedOutExitCode = 124;
 const bootTimeoutMs = 5 * 60 * 1000;
 const shutdownTimeoutMs = 2 * 60 * 1000;
@@ -50,6 +51,29 @@ export function deleteVm(vm: string) {
   if (!found) return;
   if (found.Running) tart("stop", vm, "--timeout", "5");
   tart("delete", vm);
+  deleteSandboxKey(vm);
+}
+
+const sandboxKeyFolder = (vm: string) => join(tmpdir(), `afk-loop-${vm}`);
+const sandboxKey = (vm: string) => join(sandboxKeyFolder(vm), "id_ed25519");
+
+function deleteSandboxKey(vm: string) {
+  rmSync(sandboxKeyFolder(vm), { recursive: true, force: true });
+}
+
+async function installSandboxKey(vm: string) {
+  deleteSandboxKey(vm);
+  mkdirSync(sandboxKeyFolder(vm), { mode: 0o700 });
+  execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", `afk-loop-${vm}`, "-f", sandboxKey(vm)]);
+  const install = await guestExec(vm, "umask 077 && mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys", { stdin: readFileSync(`${sandboxKey(vm)}.pub`, "utf8") });
+  check(install.exitCode === 0, `installing the Sandbox key failed in ${vm}: ${install.stderr}`);
+}
+
+export function copyFilesOut(vm: string, guestFolder: string, names: readonly string[], hostFolder: string) {
+  if (names.length === 0) return;
+  const ip = tart("ip", vm).trim();
+  const ssh = ["-i", sandboxKey(vm), "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"];
+  execFileSync("scp", ["-q", ...ssh, ...names.map((name) => `${guestUser}@${ip}:${guestFolder}/${name}`), hostFolder], { stdio: ["ignore", "ignore", "pipe"] });
 }
 
 function guestReady(vm: string): Promise<boolean> {
@@ -159,6 +183,7 @@ export const tartSandbox = (options: { readonly baseVm: string; readonly vm: str
       deleteVm(vm);
       tart("clone", options.baseVm, vm);
       await boot(vm);
+      await installSandboxKey(vm);
 
       const scripts = sandboxEnvScripts(env);
       const envWrite = await guestExec(vm, scripts.write.script, { stdin: scripts.write.stdin });
