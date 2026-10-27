@@ -85,6 +85,20 @@ describe("githubTracker, attachments GitHub rejects", () => {
   });
 });
 
+describe("githubTracker, a PR GitHub rejects with and without attachments", () => {
+  const sut = makeSUT({ "--attach": `${attachRejected}HTTP 422: Unprocessable Entity`, "pr create": `${attachRejected}HTTP 401: Bad credentials` });
+  before(sut.install);
+  after(sut.uninstall);
+
+  test("opening it fails with the first gh error", async () => {
+    const tracker = githubTracker(defineLoop(config), hostAt(tmpdir()));
+
+    const opening = tracker.openPullRequest({ branch: "issue/4-streak", title: "[#4] - Streak", body: "Closes #4.", attachments: { files: ["e/streak.png"], unattached: () => "unused" } });
+
+    await assert.rejects(opening, /HTTP 422: Unprocessable Entity/);
+  });
+});
+
 describe("githubTracker, backlog", () => {
   const issues = "repos/acme/Habitat/issues?state=open&labels=ready-for-agent";
   const labels = [{ name: "ready-for-agent" }];

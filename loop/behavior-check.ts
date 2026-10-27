@@ -1,4 +1,5 @@
-export const evidenceFolder = "~/afk-evidence";
+import { guestEvidence } from "./tart.js";
+
 export const videoCapMb = 10;
 
 type Outcome = "PASS" | "FAIL" | "INCONCLUSIVE";
@@ -52,11 +53,15 @@ export interface DroppedVideo {
 export interface BehaviorCheck extends BehaviorReading {
   readonly head: string;
   readonly verifySkill: string;
-  readonly log: string;
-  readonly evidence: string;
+  readonly log?: string;
+  readonly evidence?: string;
 }
 
 export const noBehaviorCheck = "No Behavior check: the branch changes no Platform with a Verify skill.";
+
+export function shortSha(commit: string): string {
+  return commit.slice(0, 7);
+}
 
 export function inconclusive(reason: string): BehaviorReading {
   return { outcome: "INCONCLUSIVE", reason, claims: [], skipped: [] };
@@ -66,9 +71,12 @@ export function hostReads(raw: string | undefined, finalHead: string, files: rea
   if (raw === undefined) return inconclusive("no Evidence manifest");
   const manifest = parsed(raw);
   if (!manifest) return inconclusive("Evidence manifest unreadable");
-  if (manifest.head !== finalHead) return inconclusive(`Evidence manifest is for ${manifest.head.slice(0, 7)}, not ${finalHead.slice(0, 7)}`);
+  if (manifest.head !== finalHead) return inconclusive(`Evidence manifest is for ${shortSha(manifest.head)}, not ${shortSha(finalHead)}`);
   const missing = attachList(manifest).find((file) => !files.some(({ name }) => name === file) || file.includes("/"));
-  if (missing) return inconclusive(`listed file ${missing} not in ${evidenceFolder}`);
+  if (missing) return inconclusive(`listed file ${missing} not in ${guestEvidence}`);
+  const notPng = manifest.claims.flatMap((claim) => claim.screenshots).find((file) => !file.endsWith(".png"));
+  if (notPng) return inconclusive(`listed screenshot ${notPng} is not a .png`);
+  if (manifest.video && !manifest.video.endsWith(".mp4")) return inconclusive(`listed video ${manifest.video} is not an .mp4`);
   const derived = manifest.claims.some((claim) => claim.result === "not met")
     ? "FAIL"
     : manifest.claims.length === 0 || manifest.claims.some((claim) => claim.result === "unchecked" || claim.screenshots.length === 0)
@@ -146,7 +154,11 @@ export function behaviorSection({ outcome, reason, claims, skipped, video, dropp
   });
   const skippedLines = skipped.map((item) => `- ${sentence(item.criterion)}${item.feature ? ` (\`${item.feature}\`)` : ""}: ${item.why}.`);
   return [
-    `Behavior check: ${outcome} on \`${head.slice(0, 7)}\`${why ? `: ${why}` : ""}, by the AFK loop's Verifier in the Sandbox with \`${verifySkill}\`. Its log on the Host: \`${log}\`. Its Behavior evidence on the Host: \`${evidence}\`.`,
+    [
+      `Behavior check: ${outcome} on \`${shortSha(head)}\`${why ? `: ${why}` : ""}, by the AFK loop's Verifier in the Sandbox with \`${verifySkill}\`.`,
+      ...(log ? [`Its log on the Host: \`${log}\`.`] : []),
+      ...(evidence ? [`Its Behavior evidence on the Host: \`${evidence}\`.`] : []),
+    ].join(" "),
     ...(uploadError === undefined ? [] : [`Behavior evidence could not be attached (${uploadError}). It is on the Host at ${evidence}: attach it before merging.`]),
     ...(claimLines.length ? [claimLines.join("\n")] : []),
     ...(skippedLines.length ? [`Not checked:\n${skippedLines.join("\n")}`] : []),

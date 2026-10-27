@@ -5,8 +5,9 @@ import { behaviorSection, hostReads } from "./behavior-check.js";
 import { check, checkTart, gh, loadHostEnv, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
 import { checkRepoOnGitHub } from "./preflight.js";
-import { platformsPresent, presentInSandbox } from "./platforms.js";
-import { guestEvidence, openSandbox, remoteBase } from "./sandcastle-agents.js";
+import { platformsPresent, presentInSandbox, verifySkills } from "./platforms.js";
+import { openSandbox, remoteBase } from "./sandcastle-agents.js";
+import { guestEvidence } from "./tart.js";
 import { routedTestRun } from "./test-run.js";
 import { verifierPrompt } from "./verifier-prompt.js";
 
@@ -67,13 +68,15 @@ export async function smoke(loop: Loop, host: Host) {
     console.log(`Copied a 10 MB file out over scp in ${seconds}s`);
     rmSync(copied.folder, { recursive: true, force: true });
 
-    const verifySkill = present.find((platform) => platform.verifySkill)?.verifySkill;
+    const [verifySkill] = verifySkills(present);
     if (verifySkill) {
       const prompt = verifierPrompt({ repo: loop.repo, issue, branch, base, head: sandboxHead, verifySkill });
       const verifier = await sandbox.verify({ issueNumber: issue.number, verifySkill, base, head: sandboxHead, logName: "smoke-verifier", prompt });
       check(!verifier.dirty && verifier.head === sandboxHead, `Verifier changed the branch, log: ${verifier.log}`);
       check(verifier.manifest !== undefined, `Verifier wrote no Evidence manifest, log: ${verifier.log}`);
       console.log(behaviorSection({ ...hostReads(verifier.manifest, sandboxHead, verifier.files), head: sandboxHead, verifySkill, log: verifier.log, evidence: verifier.evidence }));
+    } else {
+      console.log("Verifier skipped: no present Platform has a Verify skill");
     }
     console.log("Smoke passed");
   } finally {

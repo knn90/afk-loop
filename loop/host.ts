@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
 import { leftoverVms, type Loop } from "./loop-config.js";
-import type { Platform } from "./platforms.js";
+import { verifySkills, type Platform } from "./platforms.js";
 import { deleteVm, tartBin, vmNames } from "./tart.js";
 
 const configFolder = ".sandcastle";
@@ -64,11 +64,11 @@ export function checkTart(loop: Loop) {
 const minimumGh = [2, 99];
 
 export function checkGh(platforms: readonly Platform[], ghVersion: () => string) {
-  if (!platforms.some((platform) => platform.verifySkill)) return;
+  if (verifySkills(platforms).length === 0) return;
   const version = ghVersion().match(/gh version ((\d+)\.(\d+)\S*)/);
   const [major, minor] = [Number(version?.[2]), Number(version?.[3])];
   const recent = major > minimumGh[0] || (major === minimumGh[0] && minor >= minimumGh[1]);
-  check(recent, `gh ${version?.[1] ?? "of unknown version"} is older than ${minimumGh.join(".")}, which the Verify skill needs: brew upgrade gh`);
+  check(recent, `gh ${version?.[1] ?? "of unknown version"} is older than ${minimumGh.join(".")}, which \`gh pr create --attach\` needs to attach Behavior evidence: brew upgrade gh`);
 }
 
 export function deleteLeftoverVms(loop: Loop) {

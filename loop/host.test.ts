@@ -53,7 +53,7 @@ describe("findHost", () => {
 describe("checkGh", () => {
   test("a Verify skill needs gh 2.99 or newer, with the fix", () => {
     assert.throws(() => checkGh([platform(), platform("verify-ios")], () => "gh version 2.86.0 (2026-01-21)\nhttps://github.com/cli/cli/releases/tag/v2.86.0\n"), {
-      message: "gh 2.86.0 is older than 2.99, which the Verify skill needs: brew upgrade gh",
+      message: "gh 2.86.0 is older than 2.99, which `gh pr create --attach` needs to attach Behavior evidence: brew upgrade gh",
     });
   });
 
