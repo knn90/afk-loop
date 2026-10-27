@@ -13,10 +13,15 @@ export interface RepoRequirements {
 export interface RepoProbe {
   isOnBase(path: string): Promise<boolean>;
   labels(): Promise<string[]>;
+  gitConfig(key: string): Promise<string>;
 }
 
 const requiredFiles = ["GLOSSARY.md", "docs/agents/git-conventions.md"];
 const requiredLabels = [readyForAgent, readyForHuman];
+const requiredGitConfig = [
+  ["user.name", "<your name>"],
+  ["user.email", "<your email>"],
+];
 
 export async function checkRepo({ repo, baseBranch, platforms }: RepoRequirements, probe: RepoProbe) {
   const files = [
@@ -26,9 +31,11 @@ export async function checkRepo({ repo, baseBranch, platforms }: RepoRequirement
   ];
   const missingFiles = (await Promise.all(files.map(async (path) => ((await probe.isOnBase(path)) ? [] : [path])))).flat();
   const labels = (await probe.labels()).map((label) => label.toLowerCase());
+  const missingGitConfig = (await Promise.all(requiredGitConfig.map(async ([key, example]) => ((await probe.gitConfig(key)) ? [] : [[key, example]])))).flat();
   const missing = [
     ...missingFiles.map((path) => `${path} missing on origin/${baseBranch}: add it and push it to ${baseBranch}`),
     ...requiredLabels.filter((label) => !labels.includes(label)).map((label) => `label ${label} missing: gh label create ${label} -R ${repo}`),
+    ...missingGitConfig.map(([key, example]) => `git ${key} not set: git config ${key} "${example}"`),
   ];
   if (missing.length === 0) return;
   throw new Error([`${repo} lacks what the loop requires; nothing started:`, ...missing.map((thing) => `- ${thing}`), "What a repo needs: afk-loop's README.md#what-a-repo-needs"].join("\n"));
@@ -38,10 +45,21 @@ export function onRef(git: (...args: string[]) => string, ref: string): RepoProb
   return async (path) => lines(git("ls-tree", "--name-only", ref, "--", path)).includes(path);
 }
 
+export function configValue(git: (...args: string[]) => string): RepoProbe["gitConfig"] {
+  return async (key) => {
+    try {
+      return git("config", key).trim();
+    } catch {
+      return "";
+    }
+  };
+}
+
 export async function checkRepoOnGitHub(loop: Loop, host: Host) {
   host.fetchFromGitHub(loop.repo, loop.baseBranch);
   await checkRepo(loop, {
     isOnBase: onRef(host.git, remoteBase(loop)),
     labels: async () => lines(gh("label", "list", "-R", loop.repo, "--limit", "1000", "--json", "name", "-q", ".[].name")),
+    gitConfig: configValue(host.git),
   });
 }

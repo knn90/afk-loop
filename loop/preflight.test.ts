@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 import type { Platform } from "./platforms.js";
-import { checkRepo, onRef } from "./preflight.js";
+import { checkRepo, configValue, onRef } from "./preflight.js";
 
 describe("checkRepo", () => {
   test("lists two missing things in one message, each with its fix", async () => {
@@ -60,6 +60,19 @@ describe("checkRepo", () => {
     });
   });
 
+  test("requires the git user.name and user.email of the Host repo", async () => {
+    const sut = makeSUT({ gitConfig: {}, missingLabels: ["ready-for-human"] });
+
+    await assert.rejects(sut.check(), (error: Error) => {
+      assert.deepEqual(error.message.split("\n").slice(1, -1), [
+        "- label ready-for-human missing: gh label create ready-for-human -R acme/shop",
+        '- git user.name not set: git config user.name "<your name>"',
+        '- git user.email not set: git config user.email "<your email>"',
+      ]);
+      return true;
+    });
+  });
+
   test("a platform without a Verify skill requires no SKILL.md", async () => {
     const sut = makeSUT({ missingFiles: [".claude/skills/verify-web/SKILL.md"] });
 
@@ -83,6 +96,16 @@ describe("onRef", () => {
 
     assert.equal(await isOnBase("GLOSSARY.md"), true);
     assert.equal(await isOnBase("docs/standards-web.md"), false);
+  });
+});
+
+describe("configValue", () => {
+  test("gives a set key's value, and an empty string for an unset key", async () => {
+    const git = gitRepo();
+    git("config", "afk.owner", "Ada");
+
+    assert.equal(await configValue(git)("afk.owner"), "Ada");
+    assert.equal(await configValue(git)("afk.unset"), "");
   });
 });
 
@@ -112,11 +135,13 @@ function makeSUT({
   missingFiles = [],
   missingLabels = [],
   labels = ["bug", "ready-for-agent", "ready-for-human"],
-}: { platforms?: Platform[]; missingFiles?: string[]; missingLabels?: string[]; labels?: string[] } = {}) {
+  gitConfig = { "user.name": "Ada", "user.email": "ada@example.com" },
+}: { platforms?: Platform[]; missingFiles?: string[]; missingLabels?: string[]; labels?: string[]; gitConfig?: Record<string, string> } = {}) {
   const project = { repo: "acme/shop", baseBranch: "trunk", platforms };
   const repo = {
     isOnBase: async (path: string) => !missingFiles.includes(path),
     labels: async () => labels.filter((label) => !missingLabels.includes(label)),
+    gitConfig: async (key: string) => gitConfig[key] ?? "",
   };
   return { check: () => checkRepo(project, repo) };
 }
