@@ -228,6 +228,25 @@ describe("contradiction", () => {
   });
 });
 
+describe("implementerPrompt, Verify skill", () => {
+  test("is told not to edit the Verify skill or its Driver, found through its SKILL.md", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt(undefined, undefined, verifiedProject);
+
+    assert.ok(prompt.includes("- Do not edit the Verify skill, `.claude/skills/verify-web/`, or its Driver, the files its `SKILL.md` runs to drive the app: the Behavior check uses the base branch's copy of both.\n"));
+  });
+
+  test("names no Verify skill when no Platform has one", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt();
+
+    assert.ok(!prompt.includes("Verify skill"));
+    assert.ok(!prompt.includes("Driver"));
+  });
+});
+
 describe("findingsLeft", () => {
   test("a reply with the block gives its text", () => {
     assert.equal(findingsLeft("Done.\n<findings-left>\n1. `x` is the issue's own name.\n</findings-left>\n<promise>COMPLETE</promise>"), "1. `x` is the issue's own name.");
@@ -251,6 +270,8 @@ function platform(name: string): Platform {
 }
 
 const project = { repo: "acme/Habitat", platforms: [platform("web"), platform("server")], image: { tools: "Node and Go" } };
+
+const verifiedProject = { ...project, platforms: [{ ...platform("web"), verifySkill: "verify-web" }, platform("server")] };
 
 function makeSUT() {
   const issue: Issue = { number: 7, title: "Fix streak", body: "Body", labels: [], openBlockers: 0 };

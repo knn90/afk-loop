@@ -1,6 +1,6 @@
 import type { Issue } from "./afk-loop.js";
 import type { Project } from "./loop-config.js";
-import { sandboxLimits, committed, hostFeedbackBlock, innerBlocks, issueBlock, lastBlock, readIssueFirst, replyBlocks, standardsByFolder, glossaryRule } from "./prompt-parts.js";
+import { sandboxLimits, committed, hostFeedbackBlock, innerBlocks, issueBlock, lastBlock, readIssueFirst, replyBlocks, standardsByFolder, glossaryRule, verifySkillLimit } from "./prompt-parts.js";
 import { skill } from "./skills-plugin.js";
 
 export function findingsLeft(reply: string): string | undefined {
@@ -55,7 +55,7 @@ How to work:
 
 ${fixableFindings ? "" : contradictionRule}- ${glossaryRule} Follow ${standardsByFolder(project.platforms)} and docs/agents/git-conventions.md.
 - Invoke the \`${skill("tdd")}\` skill with the Skill tool and ${workTestFirst(fixableFindings !== undefined)}.
-${fixableFindings ? fixRoundRules : ""}${sandboxLimits(project)}
+${fixableFindings ? fixRoundRules : ""}${sandboxLimits(project)}${verifySkillLimit(project)}
 - Commit every change on this branch as \`[#${issue.number}] - Imperative summary\`.
 
 Done means ${done}, ${committed}${fixableFindings ? "" : orContradiction}. ${ending}`;

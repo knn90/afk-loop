@@ -1,7 +1,7 @@
 import type { Issue } from "./afk-loop.js";
 import { linkedIssueBlock } from "./linked-issues.js";
 import type { Project } from "./loop-config.js";
-import { folder, type Platform } from "./platforms.js";
+import { folder, verifySkillFolder, type Platform } from "./platforms.js";
 
 export const completionSignal = "<promise>COMPLETE</promise>";
 
@@ -94,3 +94,25 @@ export function sandboxLimits(project: Project): string {
 }
 
 export const committed = "all committed, and `git status` is clean";
+
+function verifySkills(platforms: readonly Platform[]): string {
+  return platforms.flatMap((platform) => (platform.verifySkill ? [`\`${verifySkillFolder(platform.verifySkill)}\``] : [])).join(", ");
+}
+
+const drivesTheApp = "the files its `SKILL.md` runs to drive the app";
+
+export function verifySkillLimit({ platforms }: Project): string {
+  const skills = verifySkills(platforms);
+  return skills ? `\n- Do not edit the Verify skill, ${skills}, or its Driver, ${drivesTheApp}: the Behavior check uses the base branch's copy of both.` : "";
+}
+
+function editFinding(edited: string): string {
+  return `\`This PR edits ${edited}: <path>. The Behavior check used the base branch's copy, so this edit was not checked. Keep it, or move it to a maintain-verification-skill run.\``;
+}
+
+export function verifySkillFindings({ platforms }: Project): string {
+  const skills = verifySkills(platforms);
+  return skills
+    ? `\n- The Verify skill is ${skills}, and its Driver is ${drivesTheApp}. For each file of the Verify skill the diff edits, raise an Open finding with its \`path\`: ${editFinding("the Verify skill")} For each Driver file the diff edits, the same with its Driver: ${editFinding("its Driver")}`
+    : "";
+}

@@ -1,7 +1,7 @@
 import type { FirstReview, FixRound, Issue, OpenFinding } from "./afk-loop.js";
 import type { Project } from "./loop-config.js";
 import { changesNoPlatform } from "./platforms.js";
-import { glossaryRule, hasBlock, issueBlock, lastBlock, readIssueFirst, replyBlocks, reviewerSandbox } from "./prompt-parts.js";
+import { glossaryRule, hasBlock, issueBlock, lastBlock, readIssueFirst, replyBlocks, reviewerSandbox, verifySkillFindings } from "./prompt-parts.js";
 import { skill } from "./skills-plugin.js";
 
 export interface ReviewBrief {
@@ -87,7 +87,7 @@ ${readOnly}
   - there is more than one reasonable fix, with different results for the user or for the design;
   - the fix reaches outside this diff: another module, or a later issue's work;
   - you are not sure the finding is valid.
-- A real problem that is not this issue's work is an Open finding. A point the <issue>'s own text settles is not a finding: leave it out.
+- A real problem that is not this issue's work is an Open finding. A point the <issue>'s own text settles is not a finding: leave it out.${verifySkillFindings(project)}
 - Fixable findings: the Implementer fixes them in one Fix round, with no decision from the maintainer. Write them as text for the Implementer: for each, its file and line, what is wrong and what fixed looks like.
 - Open findings: the maintainer must decide them. Write them ${openFindingsFormat}
 - With no Fixable finding, invoke the \`${skill("pr")}\` skill with the Skill tool and draft the PR body for the branch diff. With a Fixable finding, draft none: you draft it after the Fix round.
@@ -122,7 +122,7 @@ export function wrapUpPrompt({ project, issue, branch, base, standards, fixRound
   - Standards: the <coding-standards> block.
 - Every finding in the Fix round's commits is an Open finding, whatever its kind: this was the one Fix round. A point the <issue>'s own text settles is not a finding: leave it out.
 - Check each Fixable finding against the branch diff. One that was not fixed becomes an Open finding, ${leftReason}.
-- Restate each of your Open findings against the branch diff: its text as it holds now, its \`path\` and \`line\` as HEAD has them.`;
+- Restate each of your Open findings against the branch diff: its text as it holds now, its \`path\` and \`line\` as HEAD has them.${verifySkillFindings(project)}`;
   const finalOpenFindings = failed ? "yours and every Fixable finding" : "yours restated, each Fixable finding not fixed and each finding in the Fix round's commits";
   const checked = failed ? "every Fixable finding is an Open finding" : "the Fix round's commits are reviewed, every Fixable finding is checked";
 
