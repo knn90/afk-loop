@@ -7,7 +7,7 @@ describe("verifierPrompt", () => {
   test("names the issue, the branch, the final head and the Behavior check", () => {
     const prompt = makeSUT();
 
-    assert.ok(prompt.startsWith("You are the Verifier for issue #212 of knn90/DailyQuest, on branch `issue/212-add-task` at commit `4f1c2a9`."));
+    assert.ok(prompt.startsWith("You are the Verifier for issue #212 of acme/shop, on branch `issue/212-add-task` at commit `4f1c2a9`."));
     assert.ok(prompt.includes("Your run is the Behavior check: drive the running app and report whether it does what the issue's Acceptance criteria say."));
   });
 
@@ -27,8 +27,8 @@ describe("verifierPrompt", () => {
   test("uses the Verify skill as the Host restored it from the base", () => {
     const prompt = makeSUT();
 
-    assert.ok(prompt.includes("The Host restored the `verify-dailyquest` skill from `base-sha` before your run, so it may differ from the branch's copy. Use it as it is."));
-    assert.ok(prompt.includes("Invoke the `verify-dailyquest` skill with the Skill tool and read its feature map."));
+    assert.ok(prompt.includes("The Host restored the `verify-shop` skill from `base-sha` before your run, so it may differ from the branch's copy. Use it as it is."));
+    assert.ok(prompt.includes("Invoke the `verify-shop` skill with the Skill tool and read its feature map."));
   });
 
   test("makes no commits and no tracked changes, checked by the Host at the final head", () => {
@@ -80,5 +80,5 @@ function makeSUT(): string {
     openBlockers: 0,
     comments: ["Keep the sheet small."],
   };
-  return verifierPrompt({ repo: "knn90/DailyQuest", issue, branch: "issue/212-add-task", base: "base-sha", head: "4f1c2a9", verifySkill: "verify-dailyquest" });
+  return verifierPrompt({ repo: "acme/shop", issue, branch: "issue/212-add-task", base: "base-sha", head: "4f1c2a9", verifySkill: "verify-shop" });
 }
