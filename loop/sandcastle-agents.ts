@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { relative } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, relative } from "node:path";
 import { claudeCode, createSandbox } from "@ai-hero/sandcastle";
-import { issueBranchPrefix, type Agents, type Session, type WorktreeState } from "./afk-loop.js";
+import { issueBranchPrefix, type Agents, type Session, type VerifierRun, type WorktreeState } from "./afk-loop.js";
+import type { EvidenceFile } from "./behavior-check.js";
 import { branchFileName, check, lines, logsDir, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
 import { contradiction, findingsLeft, implementerPrompt } from "./implementer-prompt.js";
@@ -9,9 +10,12 @@ import { platformsChanged, type Platform } from "./platforms.js";
 import { completionSignal } from "./prompt-parts.js";
 import { answeredOpenFindings, firstReview, pullRequestDraft, reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
 import { copyFileOut, guestExec, guestRepo, quote, repoExec, tartSandbox } from "./tart.js";
+import { verifierPrompt } from "./verifier-prompt.js";
 
 const sandcastleSyncBase = "refs/sandcastle/sync-base";
 const guestBundle = "/tmp/sandbox-commits.bundle";
+const guestEvidence = `${dirname(guestRepo)}/afk-evidence`;
+const manifestFile = "manifest.json";
 
 const worktreesDir = ({ configDir }: Host) => `${configDir}worktrees/`;
 const runsDir = ({ configDir }: Host) => `${configDir}runs/`;
@@ -53,8 +57,17 @@ function platformsChangedBetween(host: Host, platforms: readonly Platform[], bas
   return platformsChanged(platforms, changedPaths, async (path) => succeeds(host, "cat-file", "-e", `${head}:${path}`));
 }
 
+export interface BehaviorCheckRun {
+  readonly verifySkill: string;
+  readonly base: string;
+  readonly head: string;
+  readonly logName: string;
+  readonly prompt: string;
+}
+
 interface AgentSandbox extends Omit<Session, "inspect"> {
   runAgent(name: string, logName: string, prompt: string): Promise<{ output: string; log: string }>;
+  verify(run: BehaviorCheckRun): Promise<VerifierRun>;
   inspect(base: string): Promise<WorktreeState>;
   putBack(head: string): Promise<void>;
   remove(): Promise<void>;
@@ -107,6 +120,11 @@ export async function openSandbox(loop: Loop, host: Host, vm: string, branch: st
     worktree("reset", "--hard", "--quiet", head);
     worktree("clean", "-ffdxq");
   };
+  const guestShell = async (script: string) => {
+    const result = await guestExec(vm, script);
+    check(result.exitCode === 0, `${script} failed in the Sandbox: ${result.stderr}`);
+    return result.stdout.trim();
+  };
   const markSynced = () => guestGit(`update-ref ${sandcastleSyncBase} HEAD`);
   const close = async () => {
     await sandbox.close();
@@ -128,9 +146,44 @@ export async function openSandbox(loop: Loop, host: Host, vm: string, branch: st
     return { output: run.stdout, log: relative(host.repoRoot, logPath) };
   };
 
+  const evidenceFiles = async (): Promise<EvidenceFile[]> => {
+    const listing = lines(await guestShell(`cd ${quote(guestEvidence)} && find . -maxdepth 1 -type f -exec stat -f '%z %N' {} +`));
+    return listing.flatMap((line) => {
+      const [, bytes, name] = /^(\d+) \.\/(.+)$/.exec(line) ?? [];
+      return bytes && name ? [{ name, bytes: Number(bytes) }] : [];
+    });
+  };
+  const readManifest = async () => {
+    const hostManifest = `${runMarker(host, branch)}.${manifestFile}`;
+    await copyFileOut(vm, `${guestEvidence}/${manifestFile}`, hostManifest);
+    const text = readFileSync(hostManifest, "utf8");
+    rmSync(hostManifest);
+    return text;
+  };
+
+  const putBack: AgentSandbox["putBack"] = async (head) => {
+    await guestGit(`reset --hard --quiet ${head}`);
+    await guestGit("clean -ffdq");
+    await markSynced();
+    quitRebaseApply();
+    cleanWorktreeAt(head);
+  };
+
   return {
     exec: repoExec(vm),
     runAgent,
+    async verify({ verifySkill, base, head, logName, prompt }) {
+      const skillFolder = `.claude/skills/${verifySkill}`;
+      await guestShell(`cd ${quote(guestRepo)} && rm -rf ${quote(skillFolder)} && git checkout ${base} -- ${quote(skillFolder)}`);
+      await guestShell(`rm -rf ${quote(guestEvidence)} && mkdir -p ${quote(guestEvidence)}`);
+      const run = await runAgent("Verifier", logName, prompt);
+      const runHead = await guestGit("rev-parse HEAD");
+      const dirty = (await guestGit(`status --porcelain --untracked-files=all -- . ${quote(`:(exclude)${skillFolder}`)}`)) !== "";
+      const files = await evidenceFiles();
+      const manifest = files.some(({ name }) => name === manifestFile) ? await readManifest() : undefined;
+      if (!dirty && runHead === head) await putBack(head);
+      return { log: run.log, ...(manifest === undefined ? {} : { manifest }), files: files.filter(({ name }) => name !== manifestFile), head: runHead, dirty };
+    },
     async inspect(base) {
       const head = await guestGit("rev-parse HEAD");
       const dirty = (await guestGit("status --porcelain --untracked-files=all")) !== "";
@@ -142,13 +195,7 @@ export async function openSandbox(loop: Loop, host: Host, vm: string, branch: st
       const commitsAhead = Number(host.git("rev-list", "--count", `${base}..${head}`).trim());
       return { dirty, head, commitsAhead, platforms: await platformsChangedBetween(host, loop.platforms, base, head) };
     },
-    async putBack(head) {
-      await guestGit(`reset --hard --quiet ${head}`);
-      await guestGit("clean -ffdq");
-      await markSynced();
-      quitRebaseApply();
-      cleanWorktreeAt(head);
-    },
+    putBack,
     close,
     async remove() {
       await close();
@@ -178,7 +225,7 @@ export function sandcastleAgents(loop: Loop, host: Host): Agents {
       const base = commitAt(host, remoteBase(loop));
       createIssueBranch(host, branch, base);
       const sandbox = await openSandbox(loop, host, loop.vms.issue(issue.number), branch, `#${issue.number}`);
-      const agentRuns = { Implementer: 0, Reviewer: 0 };
+      const agentRuns = { Implementer: 0, Reviewer: 0, Verifier: 0 };
       const logName = (role: keyof typeof agentRuns) => {
         agentRuns[role] += 1;
         return `issue-${issue.number}-${role.toLowerCase()}-${agentRuns[role]}`;
@@ -202,6 +249,10 @@ export function sandcastleAgents(loop: Loop, host: Host): Agents {
         async wrapUp(fixRound) {
           const run = await runAgent("Reviewer", wrapUpPrompt({ project: loop, issue, branch, base, standards: await standards(), fixRound }));
           return { log: run.log, openFindings: answeredOpenFindings(run.output), pullRequestDraft: pullRequestDraft(run.output) };
+        },
+        async verify(verifySkill, head) {
+          const prompt = verifierPrompt({ repo: loop.repo, issue, branch, base, head, verifySkill });
+          return sandbox.verify({ verifySkill, base, head, logName: logName("Verifier"), prompt });
         },
         putBack: sandbox.putBack,
         inspect: () => sandbox.inspect(base),
