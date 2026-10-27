@@ -4,7 +4,8 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
-import { findHost } from "./host.js";
+import { checkGh, findHost } from "./host.js";
+import type { Platform } from "./platforms.js";
 
 describe("findHost", () => {
   test("finds .sandcastle/loop.config.ts from the git root", () => {
@@ -49,7 +50,28 @@ describe("findHost", () => {
   });
 });
 
+describe("checkGh", () => {
+  test("a Verify skill needs gh 2.99 or newer, with the fix", () => {
+    assert.throws(() => checkGh([platform(), platform("verify-ios")], () => "gh version 2.86.0 (2026-01-21)\nhttps://github.com/cli/cli/releases/tag/v2.86.0\n"), {
+      message: "gh 2.86.0 is older than 2.99, which the Verify skill needs: brew upgrade gh",
+    });
+  });
+
+  test("passes with gh 2.99 or newer", () => {
+    checkGh([platform("verify-ios")], () => "gh version 2.99.0 (2026-09-01)\n");
+    checkGh([platform("verify-ios")], () => "gh version 3.0.1 (2026-10-01)\n");
+  });
+
+  test("without a Verify skill gh's version is not checked", () => {
+    checkGh([platform()], () => assert.fail("gh's version was read"));
+  });
+});
+
 // MARK: - Helpers
+
+function platform(verifySkill?: string): Platform {
+  return { name: "ios", folder: "ios", standards: "docs/standards-ios.md", agentBuildHint: "", verified: "", verifySkill, steps: async () => [] };
+}
 
 function makeRepo({ config }: { config: boolean }): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "afk-loop-host-")));
