@@ -27,8 +27,12 @@ export function folder(platform: Platform): string {
   return `${platform.folder}/`;
 }
 
+export function verifySkillFolder(skill: string): string {
+  return `.claude/skills/${skill}/`;
+}
+
 export function verifySkillFile(skill: string): string {
-  return `.claude/skills/${skill}/SKILL.md`;
+  return `${verifySkillFolder(skill)}SKILL.md`;
 }
 
 export function changesNoPlatform(platforms: readonly Platform[]): string {
