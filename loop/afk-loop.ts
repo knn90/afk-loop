@@ -10,7 +10,7 @@ import {
   readyForHuman,
   unchangedHeadFeedback,
 } from "./loop-rules.js";
-import { behaviorSection, hostReads, inconclusive, noBehaviorCheck, type BehaviorCheck, type EvidenceFile } from "./behavior-check.js";
+import { attachList, behaviorSection, hostReads, inconclusive, noBehaviorCheck, type BehaviorCheck, type EvidenceFile } from "./behavior-check.js";
 import { linkedIssueNumbers } from "./linked-issues.js";
 import { testChangedPlatforms, verifiedLine, type Platform } from "./platforms.js";
 
@@ -41,6 +41,12 @@ export interface PullRequest {
   readonly branch: string;
   readonly title: string;
   readonly body: string;
+  readonly attachments?: Attachments;
+}
+
+export interface Attachments {
+  readonly files: readonly string[];
+  unattached(ghError: string): string;
 }
 
 export interface OpenFinding {
@@ -384,8 +390,8 @@ async function checkBehavior(session: IssueSession, head: string, platforms: rea
   return { ...reading, head, verifySkill, log: run.log, evidence: run.evidence };
 }
 
-function behaviorLines(platforms: readonly Platform[], check?: BehaviorCheck): string[] {
-  if (check) return [behaviorSection(check)];
+function behaviorLines(platforms: readonly Platform[], check?: BehaviorCheck, uploadError?: string): string[] {
+  if (check) return [behaviorSection(check, uploadError)];
   return platforms.some((platform) => platform.verifySkill) ? [noBehaviorCheck] : [];
 }
 
@@ -401,18 +407,22 @@ function withoutClosingKeywords(draft: string): string {
 
 async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, openFindings, pullRequestDraft, fixRoundFailed, behaviorCheck }: ReviewedOutcome, loop: AfkLoopOptions): Promise<string> {
   await loop.tracker.pushBranch(branch);
-  const pullRequest = await loop.tracker.openPullRequest({
-    branch,
-    title: `[#${issue.number}] - ${summary(issue)}`,
-    body: [
+  const body = (uploadError?: string) =>
+    [
       `Closes #${issue.number}.`,
       ...(pullRequestDraft ? [withoutClosingKeywords(pullRequestDraft)] : []),
       implementedBy,
       `${reviewedBy} Its logs on the Host: ${reviewLogs.map((log) => `\`${log}\``).join(", ")}. ${openFindingsPosted(openFindings.length)}`,
       ...(fixRoundFailed ? [fixesNotIncluded] : []),
       verifiedLine(loop.platforms, platforms),
-      ...behaviorLines(loop.platforms, behaviorCheck),
-    ].join("\n\n"),
+      ...behaviorLines(loop.platforms, behaviorCheck, uploadError),
+    ].join("\n\n");
+  const files = behaviorCheck ? attachList(behaviorCheck).map((file) => `${behaviorCheck.evidence}${file}`) : [];
+  const pullRequest = await loop.tracker.openPullRequest({
+    branch,
+    title: `[#${issue.number}] - ${summary(issue)}`,
+    body: body(),
+    ...(files.length ? { attachments: { files, unattached: body } } : {}),
   });
   await loop.tracker.relabel(issue.number, { remove: readyForAgent });
   return pullRequest;
