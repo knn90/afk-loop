@@ -10,6 +10,7 @@ import {
   readyForHuman,
   unchangedHeadFeedback,
 } from "./loop-rules.js";
+import { behaviorSection, hostReads, inconclusive, noBehaviorCheck, type BehaviorCheck, type EvidenceFile } from "./behavior-check.js";
 import { linkedIssueNumbers } from "./linked-issues.js";
 import { testChangedPlatforms, verifiedLine, type Platform } from "./platforms.js";
 
@@ -97,7 +98,16 @@ export interface IssueSession extends Session {
   implement(feedback?: string, fixableFindings?: string): Promise<ImplementerRun>;
   review(): Promise<FirstReview>;
   wrapUp(fixRound: FixRound): Promise<WrapUp>;
+  verify(verifySkill: string, head: string): Promise<VerifierRun>;
   putBack(head: string): Promise<void>;
+}
+
+export interface VerifierRun {
+  readonly log: string;
+  readonly manifest?: string;
+  readonly files: readonly EvidenceFile[];
+  readonly head: string;
+  readonly dirty: boolean;
 }
 
 export interface ImplementerRun {
@@ -171,6 +181,7 @@ export interface ReviewedOutcome {
   readonly openFindings: readonly OpenFinding[];
   readonly pullRequestDraft?: string;
   readonly fixRoundFailed?: true;
+  readonly behaviorCheck?: BehaviorCheck;
 }
 
 export type Outcome =
@@ -293,19 +304,23 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
     reviewLogs.push(review.log);
     return review;
   };
-  const pullRequest = ({ openFindings, pullRequestDraft }: Review, platforms: readonly Platform[], fixRoundFailed?: true): Outcome => ({
-    issue: issue.number,
-    kind: "pull-request",
-    branch,
-    reviewLogs,
-    platforms,
-    openFindings,
-    ...(pullRequestDraft ? { pullRequestDraft } : {}),
-    ...(fixRoundFailed ? { fixRoundFailed } : {}),
-  });
+  const pullRequest = async ({ openFindings, pullRequestDraft }: Review, head: string, platforms: readonly Platform[], fixRoundFailed?: true): Promise<Outcome> => {
+    const behaviorCheck = await checkBehavior(session, head, platforms);
+    return {
+      issue: issue.number,
+      kind: "pull-request",
+      branch,
+      reviewLogs,
+      platforms,
+      openFindings,
+      ...(pullRequestDraft ? { pullRequestDraft } : {}),
+      ...(fixRoundFailed ? { fixRoundFailed } : {}),
+      ...(behaviorCheck ? { behaviorCheck } : {}),
+    };
+  };
   const wrapUp = async (round: FixRound, head: string, platforms: readonly Platform[]): Promise<Outcome> => {
     const review = await reviewerRun(session.wrapUp(round), head);
-    return pullRequest({ ...review, openFindings: finalOpenFindings(round, review.openFindings) }, platforms, round.failed);
+    return pullRequest({ ...review, openFindings: finalOpenFindings(round, review.openFindings) }, head, platforms, round.failed);
   };
   while (failures < attemptBudget) {
     const run = await session.implement(feedback, fixRound?.fixableFindings);
@@ -337,7 +352,7 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
     if (fixRound) return wrapUp(fixRound, worktree.head, worktree.platforms);
     const review = await reviewerRun(session.review(), worktree.head);
     if (review.unreadable) throw new Error(`${unreadableReview} Its log: ${review.log}`);
-    if (!review.fixableFindings) return pullRequest(review, worktree.platforms);
+    if (!review.fixableFindings) return pullRequest(review, worktree.head, worktree.platforms);
     fixRound = { fixableFindings: review.fixableFindings, openFindings: review.openFindings, reviewedHead: worktree.head };
     reviewedPlatforms = worktree.platforms;
     lastFailure = undefined;
@@ -358,6 +373,21 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
   };
 }
 
+async function checkBehavior(session: IssueSession, head: string, platforms: readonly Platform[]): Promise<BehaviorCheck | undefined> {
+  const verifySkill = platforms.find((platform) => platform.verifySkill)?.verifySkill;
+  if (!verifySkill) return undefined;
+  const run = await session.verify(verifySkill, head);
+  const changed = run.dirty || run.head !== head;
+  if (changed) await session.putBack(head);
+  const reading = changed ? inconclusive("the Verifier changed the branch") : hostReads(run.manifest, head, run.files);
+  return { ...reading, head, verifySkill, log: run.log };
+}
+
+function behaviorLines(platforms: readonly Platform[], check?: BehaviorCheck): string[] {
+  if (check) return [behaviorSection(check)];
+  return platforms.some((platform) => platform.verifySkill) ? [noBehaviorCheck] : [];
+}
+
 function finalOpenFindings({ fixableFindings, openFindings, failed }: FixRound, wrapUp?: readonly OpenFinding[]): readonly OpenFinding[] {
   if (!failed) return wrapUp ?? [...openFindings, { text: `${unchecked}\n\n${fixableFindings}` }];
   if (wrapUp && wrapUp.length > openFindings.length) return wrapUp;
@@ -368,7 +398,7 @@ function withoutClosingKeywords(draft: string): string {
   return draft.replace(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(:?\s+(?:[\w.-]+\/[\w.-]+)?#\d+)/gi, "Refs$1");
 }
 
-async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, openFindings, pullRequestDraft, fixRoundFailed }: ReviewedOutcome, loop: AfkLoopOptions): Promise<string> {
+async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, openFindings, pullRequestDraft, fixRoundFailed, behaviorCheck }: ReviewedOutcome, loop: AfkLoopOptions): Promise<string> {
   await loop.tracker.pushBranch(branch);
   const pullRequest = await loop.tracker.openPullRequest({
     branch,
@@ -380,6 +410,7 @@ async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, op
       `${reviewedBy} Its logs on the Host: ${reviewLogs.map((log) => `\`${log}\``).join(", ")}. ${openFindingsPosted(openFindings.length)}`,
       ...(fixRoundFailed ? [fixesNotIncluded] : []),
       verifiedLine(loop.platforms, platforms),
+      ...behaviorLines(loop.platforms, behaviorCheck),
     ].join("\n\n"),
   });
   await loop.tracker.relabel(issue.number, { remove: readyForAgent });

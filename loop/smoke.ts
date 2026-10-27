@@ -1,9 +1,12 @@
+import type { Issue } from "./afk-loop.js";
+import { behaviorSection, hostReads } from "./behavior-check.js";
 import { check, checkTart, gh, loadHostEnv, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
 import { checkRepoOnGitHub } from "./preflight.js";
 import { platformsPresent, presentInSandbox } from "./platforms.js";
 import { openSandbox, remoteBase } from "./sandcastle-agents.js";
 import { routedTestRun } from "./test-run.js";
+import { verifierPrompt } from "./verifier-prompt.js";
 
 const branch = "sandcastle/smoke";
 const subject = "[#0] - Smoke commit";
@@ -15,8 +18,8 @@ export async function smoke(loop: Loop, host: Host) {
 
   loadHostEnv(host);
 
-  const issue = gh("issue", "view", String(loop.smokeIssue), "-R", loop.repo, "--json", "number,title", "-q", '"#\\(.number) \\(.title)"').trim();
-  console.log(`Host gh: ${issue}`);
+  const issue: Issue = { ...JSON.parse(gh("issue", "view", String(loop.smokeIssue), "-R", loop.repo, "--json", "number,title,body")), labels: [], openBlockers: 0 };
+  console.log(`Host gh: #${issue.number} ${issue.title}`);
 
   checkTart(loop);
   await checkRepoOnGitHub(loop, host);
@@ -46,9 +49,19 @@ export async function smoke(loop: Loop, host: Host) {
     check(host.git("rev-parse", branch).trim() === sandboxHead, "Host branch isn't at the Sandbox commit");
     check(host.git("log", "-1", "--format=%s", branch).trim() === subject, "commit subject changed on the way to the Host");
 
-    const testRun = await testRunner.run(sandbox.exec, branch, await platformsPresent(loop.platforms, presentInSandbox(sandbox.exec)));
+    const present = await platformsPresent(loop.platforms, presentInSandbox(sandbox.exec));
+    const testRun = await testRunner.run(sandbox.exec, branch, present);
     check(testRun.passed, `Test run failed, log: ${testRunner.rawLogPath(branch)}\n${testRun.log}`);
     check(!(await sandbox.inspect(base)).dirty, "Test run left uncommitted changes");
+
+    const verifySkill = present.find((platform) => platform.verifySkill)?.verifySkill;
+    if (verifySkill) {
+      const prompt = verifierPrompt({ repo: loop.repo, issue, branch, base, head: sandboxHead, verifySkill });
+      const verifier = await sandbox.verify({ verifySkill, base, head: sandboxHead, logName: "smoke-verifier", prompt });
+      check(!verifier.dirty && verifier.head === sandboxHead, `Verifier changed the branch, log: ${verifier.log}`);
+      check(verifier.manifest !== undefined, `Verifier wrote no Evidence manifest, log: ${verifier.log}`);
+      console.log(behaviorSection({ ...hostReads(verifier.manifest, sandboxHead, verifier.files), head: sandboxHead, verifySkill, log: verifier.log }));
+    }
     console.log("Smoke passed");
   } finally {
     await sandbox.remove();
