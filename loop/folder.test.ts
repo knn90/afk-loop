@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { describe, test } from "node:test";
@@ -52,7 +52,7 @@ describe("the loop's folder", () => {
     const sandcastle = join(mkdtempSync(join(tmpdir(), "afk-loop-copy-")), ".sandcastle");
     cpSync(folder, join(sandcastle, "afk-loop"), { recursive: true, filter: (path) => !/node_modules|\.git$/.test(path) });
     mkdirSync(join(sandcastle, "node_modules"));
-    const installed = join(folder, "node_modules");
+    const installed = nearestNodeModules(folder);
     for (const dependency of ["@ai-hero", "@types", "tsx", "typescript", "undici-types"]) symlinkSync(join(installed, dependency), join(sandcastle, "node_modules", dependency));
     symlinkSync("../afk-loop", join(sandcastle, "node_modules", "afk-loop"));
     writeFileSync(join(sandcastle, "loop.config.ts"), otherProjectConfig);
@@ -66,6 +66,14 @@ describe("the loop's folder", () => {
 });
 
 // MARK: - Helpers
+
+function nearestNodeModules(dir: string): string {
+  const candidate = join(dir, "node_modules");
+  if (existsSync(join(candidate, "typescript"))) return candidate;
+  const parent = dirname(dir);
+  assert.notEqual(parent, dir, "no node_modules with typescript above the loop's folder");
+  return nearestNodeModules(parent);
+}
 
 function folderFiles(dir = ""): string[] {
   return readdirSync(join(folder, dir), { withFileTypes: true })
