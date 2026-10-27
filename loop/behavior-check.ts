@@ -41,6 +41,12 @@ export interface BehaviorReading {
   readonly claims: readonly Claim[];
   readonly skipped: readonly Skipped[];
   readonly video?: string;
+  readonly droppedVideo?: DroppedVideo;
+}
+
+export interface DroppedVideo {
+  readonly name: string;
+  readonly megabytes: number;
 }
 
 export interface BehaviorCheck extends BehaviorReading {
@@ -61,8 +67,7 @@ export function hostReads(raw: string | undefined, finalHead: string, files: rea
   const manifest = parsed(raw);
   if (!manifest) return inconclusive("Evidence manifest unreadable");
   if (manifest.head !== finalHead) return inconclusive(`Evidence manifest is for ${manifest.head.slice(0, 7)}, not ${finalHead.slice(0, 7)}`);
-  const listed = [...new Set([...manifest.claims.flatMap((claim) => claim.screenshots), ...(manifest.video ? [manifest.video] : [])])];
-  const missing = listed.find((file) => !files.some(({ name }) => name === file) || file.includes("/"));
+  const missing = attachList(manifest).find((file) => !files.some(({ name }) => name === file) || file.includes("/"));
   if (missing) return inconclusive(`listed file ${missing} not in ${evidenceFolder}`);
   const derived = manifest.claims.some((claim) => claim.result === "not met")
     ? "FAIL"
@@ -70,7 +75,8 @@ export function hostReads(raw: string | undefined, finalHead: string, files: rea
       ? "INCONCLUSIVE"
       : "PASS";
   const { outcome, reason, claims, skipped, video } = manifest;
-  const shown = { claims, skipped, ...(video ? { video } : {}) };
+  const megabytes = (files.find(({ name }) => name === video)?.bytes ?? 0) / 1024 / 1024;
+  const shown = { claims, skipped, ...(video ? (megabytes > videoCapMb ? { droppedVideo: { name: video, megabytes } } : { video }) : {}) };
   if (derived !== outcome) return { outcome: "INCONCLUSIVE", reason: `Evidence manifest says ${outcome}, its claims say ${derived}`, ...shown };
   return { outcome, ...(reason ? { reason } : {}), ...shown };
 }
@@ -127,17 +133,24 @@ function sentence(text: string): string {
   return text.replace(/[.\s]+$/, "");
 }
 
-export function behaviorSection({ outcome, reason, claims, skipped, video, head, verifySkill, log, evidence }: BehaviorCheck): string {
+export function attachList({ claims, video }: BehaviorReading): string[] {
+  return [...new Set([...claims.flatMap((claim) => claim.screenshots), ...(video ? [video] : [])])];
+}
+
+export function behaviorSection({ outcome, reason, claims, skipped, video, droppedVideo, head, verifySkill, log, evidence }: BehaviorCheck, uploadError?: string): string {
+  const media = (file: string) => (uploadError === undefined ? `${evidence}${file}` : `\`${file}\``);
   const why = [outcome === "PASS" ? undefined : reason && sentence(reason), outcome === "INCONCLUSIVE" ? "Check the app by hand before merging" : undefined].filter(Boolean).join(". ");
   const claimLines = claims.map((claim) => {
     const tag = claim.kind === "regression" ? `, regression (\`${claim.feature}\`)` : claim.feature === null ? ", no feature file, driven with the Drive commands" : "";
-    return `- **${label[claim.result]}**${tag}: ${claim.criterion}\n  ${claim.observed}${claim.screenshots.map((file) => `\n  \`${file}\``).join("")}`;
+    return `- **${label[claim.result]}**${tag}: ${claim.criterion}\n  ${claim.observed}${claim.screenshots.map((file) => `\n  ${media(file)}`).join("")}`;
   });
   const skippedLines = skipped.map((item) => `- ${sentence(item.criterion)}${item.feature ? ` (\`${item.feature}\`)` : ""}: ${item.why}.`);
   return [
     `Behavior check: ${outcome} on \`${head.slice(0, 7)}\`${why ? `: ${why}` : ""}, by the AFK loop's Verifier in the Sandbox with \`${verifySkill}\`. Its log on the Host: \`${log}\`. Its Behavior evidence on the Host: \`${evidence}\`.`,
+    ...(uploadError === undefined ? [] : [`Behavior evidence could not be attached (${uploadError}). It is on the Host at ${evidence}: attach it before merging.`]),
     ...(claimLines.length ? [claimLines.join("\n")] : []),
     ...(skippedLines.length ? [`Not checked:\n${skippedLines.join("\n")}`] : []),
-    ...(video ? [`Video of the drive: \`${video}\``] : []),
+    ...(video ? [`Video of the drive: ${media(video)}`] : []),
+    ...(droppedVideo ? [`Video dropped: ${droppedVideo.megabytes.toFixed(1)} MB, over the ${videoCapMb} MB cap. On the Host: ${evidence}${droppedVideo.name}.`] : []),
   ].join("\n\n");
 }

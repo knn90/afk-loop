@@ -95,6 +95,10 @@ export function gh(...args: string[]): string {
   return execFileSync("gh", args, { encoding: "utf8" });
 }
 
+export function ghAt(cwd: string, ...args: string[]): string {
+  return execFileSync("gh", args, { encoding: "utf8", cwd });
+}
+
 export function ghWithInput(input: string, ...args: string[]): string {
   return execFileSync("gh", args, { encoding: "utf8", input });
 }

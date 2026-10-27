@@ -996,10 +996,11 @@ describe("runAfkLoop, Behavior check", () => {
         [
           "Verified: the Test run passed on the reviewed commit (the ios tests).",
           `Behavior check: PASS on \`head-1\`, ${by}`,
-          "- **Met**: The streak counts the day\n  The streak read 1 day.\n  `streak.png`",
+          "- **Met**: The streak counts the day\n  The streak read 1 day.\n  .sandcastle/evidence/1-head-1/streak.png",
         ].join("\n\n"),
       ),
     );
+    assert.deepEqual(tracker.pullRequests[0]?.attached, [".sandcastle/evidence/1-head-1/streak.png"]);
   });
 
   test("after a Fix round the Verifier runs once, after the wrap-up, at the head it reviewed", async () => {
@@ -1037,14 +1038,18 @@ describe("runAfkLoop, Behavior check", () => {
         [
           `Behavior check: FAIL on \`head-1\`: The streak stays at 0 days, ${by}`,
           [
-            "- **Not met**: The streak counts the day\n  The streak read 0 days.\n  `streak.png`",
-            "- **Met**, regression (`today.md`): Today: check off Meditate\n  All 1 marked.\n  `check-off.png`\n  `streak.png`",
-            "- **Met**, no feature file, driven with the Drive commands: The streak shows a flame\n  A flame by the count.\n  `flame.png`",
+            "- **Not met**: The streak counts the day\n  The streak read 0 days.\n  .sandcastle/evidence/1-head-1/streak.png",
+            "- **Met**, regression (`today.md`): Today: check off Meditate\n  All 1 marked.\n  .sandcastle/evidence/1-head-1/check-off.png\n  .sandcastle/evidence/1-head-1/streak.png",
+            "- **Met**, no feature file, driven with the Drive commands: The streak shows a flame\n  A flame by the count.\n  .sandcastle/evidence/1-head-1/flame.png",
           ].join("\n"),
           "Not checked:\n- StreakStore has unit tests: not observable in the app.\n- Today: the streak starts at 1 (`today.md`): changed by this issue: feature file out of date.",
-          "Video of the drive: `drive.mp4`",
+          "Video of the drive: .sandcastle/evidence/1-head-1/drive.mp4",
         ].join("\n\n"),
       ),
+    );
+    assert.deepEqual(
+      tracker.pullRequests[0]?.attached,
+      ["streak.png", "check-off.png", "flame.png", "drive.mp4"].map((file) => `.sandcastle/evidence/1-head-1/${file}`),
     );
   });
 
@@ -1065,12 +1070,13 @@ describe("runAfkLoop, Behavior check", () => {
     ["a listed file that is missing", () => ({ files: [] }), "listed file streak.png not in ~/afk-evidence"],
     ["a listed file with a / in its name", () => ({ manifest: manifest("head-1", { claims: [{ ...metClaim, screenshots: ["shots/streak.png"] }] }), files: [{ name: "shots/streak.png", bytes: 1 }] }), "listed file shots/streak.png not in ~/afk-evidence"],
   ] as const) {
-    test(`${what} gives INCONCLUSIVE with that reason, and no claims`, async () => {
+    test(`${what} gives INCONCLUSIVE with that reason, no claims and no attachment`, async () => {
       const { sut, tracker } = check({ verifier });
 
       await sut.run();
 
       assert.ok(prBody(tracker).endsWith(`Behavior check: INCONCLUSIVE on \`head-1\`: ${reason}. Check the app by hand before merging, ${by}`));
+      assert.deepEqual(tracker.pullRequests[0]?.attached, []);
     });
   }
 
@@ -1089,6 +1095,46 @@ describe("runAfkLoop, Behavior check", () => {
     );
   });
 
+  test("a video over 10 MB is not attached, and the PR gives its size and Host path", async () => {
+    const files = [{ name: "streak.png", bytes: 2048 }, { name: "drive.mp4", bytes: 14_680_064 }];
+    const { sut, tracker } = check({ verifier: (head) => ({ manifest: manifest(head, { video: "drive.mp4" }), files }) });
+
+    await sut.run();
+
+    assert.ok(prBody(tracker).endsWith("\n\nVideo dropped: 14.0 MB, over the 10 MB cap. On the Host: .sandcastle/evidence/1-head-1/drive.mp4."));
+    assert.deepEqual(tracker.pullRequests[0]?.attached, [".sandcastle/evidence/1-head-1/streak.png"]);
+  });
+
+  test("a video of 10 MB is attached", async () => {
+    const files = [{ name: "streak.png", bytes: 2048 }, { name: "drive.mp4", bytes: 10_485_760 }];
+    const { sut, tracker } = check({ verifier: (head) => ({ manifest: manifest(head, { video: "drive.mp4" }), files }) });
+
+    await sut.run();
+
+    assert.ok(prBody(tracker).endsWith("\n\nVideo of the drive: .sandcastle/evidence/1-head-1/drive.mp4"));
+    assert.deepEqual(tracker.pullRequests[0]?.attached, [".sandcastle/evidence/1-head-1/streak.png", ".sandcastle/evidence/1-head-1/drive.mp4"]);
+  });
+
+  test("an upload that fails still opens the PR, with the gh error, the Host path, and file names in the claims", async () => {
+    const files = [{ name: "streak.png", bytes: 2048 }, { name: "drive.mp4", bytes: 2048 }];
+    const { sut, tracker } = check({ verifier: (head) => ({ manifest: manifest(head, { video: "drive.mp4" }), files }), attachFails: "HTTP 422: Unprocessable Entity" });
+
+    const outcomes = await sut.run();
+
+    assert.equal(outcomes[0]?.kind, "pull-request");
+    assert.ok(
+      prBody(tracker).endsWith(
+        [
+          `Behavior check: PASS on \`head-1\`, ${by}`,
+          "Behavior evidence could not be attached (HTTP 422: Unprocessable Entity). It is on the Host at .sandcastle/evidence/1-head-1/: attach it before merging.",
+          "- **Met**: The streak counts the day\n  The streak read 1 day.\n  `streak.png`",
+          "Video of the drive: `drive.mp4`",
+        ].join("\n\n"),
+      ),
+    );
+    assert.deepEqual(tracker.pullRequests[0]?.attached, []);
+  });
+
   for (const [what, verifier] of [
     ["a dirty tree", () => ({ dirty: true })],
     ["a moved HEAD", () => ({ head: "head-9" })],
@@ -1100,6 +1146,7 @@ describe("runAfkLoop, Behavior check", () => {
 
       assert.deepEqual(calls.slice(6, 9), ["verify verify-ios at head-1", "put back head-1", "close issue/1-issue-1"]);
       assert.ok(prBody(tracker).endsWith(`Behavior check: INCONCLUSIVE on \`head-1\`: the Verifier changed the branch. Check the app by hand before merging, ${by}`));
+      assert.deepEqual(tracker.pullRequests[0]?.attached, []);
     });
   }
 
@@ -1143,6 +1190,7 @@ interface Fixture {
   runs?: Record<number, Run[]>;
   testRunResults?: (string | null)[];
   pushFails?: boolean;
+  attachFails?: string;
   rejectedReviews?: number;
   linkedIssues?: LinkedIssue[];
   comments?: Record<number, string[] | "unreadable">;
@@ -1212,7 +1260,7 @@ class SpyTracker implements Tracker {
   issues: Issue[];
   pushedBranches: string[];
   pushed: string[] = [];
-  pullRequests: PullRequest[] = [];
+  pullRequests: (PullRequest & { attached: readonly string[] })[] = [];
   reviews: PullRequestReview[] = [];
   comments: string[] = [];
 
@@ -1251,7 +1299,10 @@ class SpyTracker implements Tracker {
 
   async openPullRequest(pullRequest: PullRequest) {
     this.calls.push(`open PR ${pullRequest.branch}`);
-    this.pullRequests.push(pullRequest);
+    const { attachments, ...opened } = pullRequest;
+    const { attachFails } = this.fixture;
+    if (attachments && attachFails) this.pullRequests.push({ ...opened, body: attachments.unattached(attachFails), attached: [] });
+    else this.pullRequests.push({ ...opened, attached: attachments?.files ?? [] });
     return `https://pr/${pullRequest.branch}`;
   }
 
