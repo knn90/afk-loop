@@ -8,7 +8,7 @@ The loop must test a branch without knowing the project. The first loop held one
 
 ## Decision
 
-`Platform` is the seam. The project's `loop.config.ts` hands the loop `Platform` objects: `name`, `folder`, `standards`, `agentBuildHint`, `verified`, `steps(sandbox)`, and optionally `afterFailure` and `presentWhen`.
+`Platform` is the seam. The project's `loop.config.ts` hands the loop `Platform` objects: `name`, `folder`, `standards`, `agentBuildHint`, `verified`, `steps(sandbox)`, and optionally `afterFailure`, `presentWhen` and `verifySkill`.
 
 - **Steps are code**: `steps(sandbox)` runs the project's own commands in the Sandbox. The loop knows no workspace, scheme, package folder or build task.
 - **The loop routes**: a platform has a Test run when the branch changes its `folder` (and, if set, the `presentWhen` file is on the branch). The prompts' build line and the Reviewer's standards are composed from the same objects.

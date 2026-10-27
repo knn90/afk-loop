@@ -86,6 +86,10 @@ _Avoid_: QA agent, judge
 The project's skill, named by its Platform, that tells an agent how to launch, check, drive and capture the running app, with one feature file per feature it covers. A human makes it once per project; the Verifier uses the base branch's copy, never the branch's.
 _Avoid_: verification skill, QA skill
 
+**Driver**:
+The project code a Verify skill runs to launch, drive and capture the app. Like the Verify skill, only the base branch's copy counts; a PR that edits it gets an Open finding.
+_Avoid_: harness, test helper
+
 **Feature file**:
 The Verify skill's recipe for one feature: how a user reaches it, how to drive it, and the journeys that prove it works. Only the base branch's copy counts; a PR never updates one.
 _Avoid_: feature map entry, recipe
