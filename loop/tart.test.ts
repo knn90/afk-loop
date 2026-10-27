@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, statSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
-import { sandboxEnvFile, sandboxEnvScripts } from "./tart.js";
+import { copyOutChunkBytes, copyOutScripts, sandboxEnvFile, sandboxEnvScripts } from "./tart.js";
 
 describe("sandboxEnvScripts", () => {
   test("hands the Sandbox env to a Sandbox command through stdin, never through a script", () => {
@@ -35,6 +36,26 @@ describe("sandboxEnvScripts", () => {
 
     assert.notEqual(result.status, 0);
     assert.ok(!existsSync(join(home, "ran")));
+  });
+});
+
+describe("copyOutScripts", () => {
+  test("reads a file in chunks that put back together give the file", () => {
+    const home = newHome();
+    const file = join(home, "commits.bundle");
+    const bytes = randomBytes(2 * copyOutChunkBytes + 3);
+    writeFileSync(file, bytes);
+
+    const scripts = copyOutScripts(file, bytes.length);
+    const chunks = scripts.map((script) => spawnSync("/bin/bash", ["-c", script]).stdout);
+
+    assert.equal(scripts.length, 3);
+    assert.ok(chunks.every((chunk) => chunk.length <= copyOutChunkBytes));
+    assert.ok(Buffer.concat(chunks).equals(bytes));
+  });
+
+  test("an empty file needs no chunk", () => {
+    assert.deepEqual(copyOutScripts("/tmp/empty", 0), []);
   });
 });
 
