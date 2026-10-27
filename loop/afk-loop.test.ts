@@ -983,7 +983,7 @@ describe("runAfkLoop, Acceptance criteria", () => {
 describe("runAfkLoop, Behavior check", () => {
   const check = (fixture: Partial<Fixture> = {}) => makeSUT({ issues: [issue(1)], platforms: [web, ios], runs: { 1: [{ platforms: [ios] }] }, ...fixture });
   const prBody = (tracker: SpyTracker) => tracker.pullRequests[0]?.body ?? "";
-  const by = "by the AFK loop's Verifier in the Sandbox with `verify-ios`. Its log on the Host: `logs/issue-1-verifier-1`.";
+  const by = "by the AFK loop's Verifier in the Sandbox with `verify-ios`. Its log on the Host: `logs/issue-1-verifier-1`. Its Behavior evidence on the Host: `.sandcastle/evidence/1-head-1/`.";
 
   test("the Verifier runs once after the Reviewer's last run, at the final head, and the PR shows its PASS under the Verified line", async () => {
     const { sut, tracker, calls } = check();
@@ -1191,7 +1191,7 @@ function manifest(head: string, overrides: Partial<Manifest> = {}): string {
 }
 
 function passing(head: string): VerifierRun {
-  return { log: "logs/issue-1-verifier-1", manifest: manifest(head), files: [{ name: "streak.png", bytes: 2048 }], head, dirty: false };
+  return { log: "logs/issue-1-verifier-1", evidence: `.sandcastle/evidence/1-${head}/`, manifest: manifest(head), files: [{ name: "streak.png", bytes: 2048 }], head, dirty: false };
 }
 
 function testRuns(calls: string[]): number {

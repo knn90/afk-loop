@@ -104,6 +104,7 @@ export interface IssueSession extends Session {
 
 export interface VerifierRun {
   readonly log: string;
+  readonly evidence: string;
   readonly manifest?: string;
   readonly files: readonly EvidenceFile[];
   readonly head: string;
@@ -380,7 +381,7 @@ async function checkBehavior(session: IssueSession, head: string, platforms: rea
   const changed = run.dirty || run.head !== head;
   if (changed) await session.putBack(head);
   const reading = changed ? inconclusive("the Verifier changed the branch") : hostReads(run.manifest, head, run.files);
-  return { ...reading, head, verifySkill, log: run.log };
+  return { ...reading, head, verifySkill, log: run.log, evidence: run.evidence };
 }
 
 function behaviorLines(platforms: readonly Platform[], check?: BehaviorCheck): string[] {

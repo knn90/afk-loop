@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { defaultCap, describeHandoff, runAfkLoop, type Outcome } from "./afk-loop.js";
+import { deleteOldEvidence } from "./evidence.js";
 import { githubTracker } from "./github-tracker.js";
 import { check, checkTart, deleteLeftoverVms, loadHostEnv, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
@@ -34,6 +35,7 @@ export async function run(loop: Loop, host: Host, args: readonly string[]) {
   checkTart(loop);
   await checkRepoOnGitHub(loop, host);
   deleteLeftoverVms(loop);
+  deleteOldEvidence(host);
 
   const outcomes = await runAfkLoop({
     tracker: githubTracker(loop, host),

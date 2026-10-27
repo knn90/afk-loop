@@ -47,6 +47,7 @@ export interface BehaviorCheck extends BehaviorReading {
   readonly head: string;
   readonly verifySkill: string;
   readonly log: string;
+  readonly evidence: string;
 }
 
 export const noBehaviorCheck = "No Behavior check: the branch changes no Platform with a Verify skill.";
@@ -126,7 +127,7 @@ function sentence(text: string): string {
   return text.replace(/[.\s]+$/, "");
 }
 
-export function behaviorSection({ outcome, reason, claims, skipped, video, head, verifySkill, log }: BehaviorCheck): string {
+export function behaviorSection({ outcome, reason, claims, skipped, video, head, verifySkill, log, evidence }: BehaviorCheck): string {
   const why = [outcome === "PASS" ? undefined : reason && sentence(reason), outcome === "INCONCLUSIVE" ? "Check the app by hand before merging" : undefined].filter(Boolean).join(". ");
   const claimLines = claims.map((claim) => {
     const tag = claim.kind === "regression" ? `, regression (\`${claim.feature}\`)` : claim.feature === null ? ", no feature file, driven with the Drive commands" : "";
@@ -134,7 +135,7 @@ export function behaviorSection({ outcome, reason, claims, skipped, video, head,
   });
   const skippedLines = skipped.map((item) => `- ${sentence(item.criterion)}${item.feature ? ` (\`${item.feature}\`)` : ""}: ${item.why}.`);
   return [
-    `Behavior check: ${outcome} on \`${head.slice(0, 7)}\`${why ? `: ${why}` : ""}, by the AFK loop's Verifier in the Sandbox with \`${verifySkill}\`. Its log on the Host: \`${log}\`.`,
+    `Behavior check: ${outcome} on \`${head.slice(0, 7)}\`${why ? `: ${why}` : ""}, by the AFK loop's Verifier in the Sandbox with \`${verifySkill}\`. Its log on the Host: \`${log}\`. Its Behavior evidence on the Host: \`${evidence}\`.`,
     ...(claimLines.length ? [claimLines.join("\n")] : []),
     ...(skippedLines.length ? [`Not checked:\n${skippedLines.join("\n")}`] : []),
     ...(video ? [`Video of the drive: \`${video}\``] : []),

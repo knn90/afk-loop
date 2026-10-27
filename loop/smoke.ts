@@ -1,15 +1,18 @@
+import { createHash } from "node:crypto";
+import { readFileSync, rmSync } from "node:fs";
 import type { Issue } from "./afk-loop.js";
 import { behaviorSection, hostReads } from "./behavior-check.js";
 import { check, checkTart, gh, loadHostEnv, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
 import { checkRepoOnGitHub } from "./preflight.js";
 import { platformsPresent, presentInSandbox } from "./platforms.js";
-import { openSandbox, remoteBase } from "./sandcastle-agents.js";
+import { guestEvidence, openSandbox, remoteBase } from "./sandcastle-agents.js";
 import { routedTestRun } from "./test-run.js";
 import { verifierPrompt } from "./verifier-prompt.js";
 
 const branch = "sandcastle/smoke";
 const subject = "[#0] - Smoke commit";
+const bigFile = "smoke-10mb.bin";
 
 export async function smoke(loop: Loop, host: Host) {
   const deleteSmokeBranch = () => {
@@ -54,13 +57,23 @@ export async function smoke(loop: Loop, host: Host) {
     check(testRun.passed, `Test run failed, log: ${testRunner.rawLogPath(branch)}\n${testRun.log}`);
     check(!(await sandbox.inspect(base)).dirty, "Test run left uncommitted changes");
 
+    const made = await sandbox.exec(`rm -rf ${guestEvidence} && mkdir -p ${guestEvidence} && head -c ${10 * 1024 * 1024} /dev/urandom > ${guestEvidence}/${bigFile} && shasum -a 256 ${guestEvidence}/${bigFile}`);
+    check(made.exitCode === 0, `making a 10 MB file in the Sandbox failed: ${made.output}`);
+    const started = Date.now();
+    const copied = await sandbox.copyEvidenceOut(issue.number, sandboxHead);
+    const seconds = (Date.now() - started) / 1000;
+    const hostSha = createHash("sha256").update(readFileSync(`${copied.folder}${bigFile}`)).digest("hex");
+    check(made.output.startsWith(hostSha), `10 MB file changed on its way out of the Sandbox: ${copied.folder}${bigFile}`);
+    console.log(`Copied a 10 MB file out over scp in ${seconds}s`);
+    rmSync(copied.folder, { recursive: true, force: true });
+
     const verifySkill = present.find((platform) => platform.verifySkill)?.verifySkill;
     if (verifySkill) {
       const prompt = verifierPrompt({ repo: loop.repo, issue, branch, base, head: sandboxHead, verifySkill });
-      const verifier = await sandbox.verify({ verifySkill, base, head: sandboxHead, logName: "smoke-verifier", prompt });
+      const verifier = await sandbox.verify({ issueNumber: issue.number, verifySkill, base, head: sandboxHead, logName: "smoke-verifier", prompt });
       check(!verifier.dirty && verifier.head === sandboxHead, `Verifier changed the branch, log: ${verifier.log}`);
       check(verifier.manifest !== undefined, `Verifier wrote no Evidence manifest, log: ${verifier.log}`);
-      console.log(behaviorSection({ ...hostReads(verifier.manifest, sandboxHead, verifier.files), head: sandboxHead, verifySkill, log: verifier.log }));
+      console.log(behaviorSection({ ...hostReads(verifier.manifest, sandboxHead, verifier.files), head: sandboxHead, verifySkill, log: verifier.log, evidence: verifier.evidence }));
     }
     console.log("Smoke passed");
   } finally {

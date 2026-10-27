@@ -3,18 +3,19 @@ import { dirname, relative } from "node:path";
 import { claudeCode, createSandbox } from "@ai-hero/sandcastle";
 import { issueBranchPrefix, type Agents, type Session, type VerifierRun, type WorktreeState } from "./afk-loop.js";
 import type { EvidenceFile } from "./behavior-check.js";
+import { hostEvidenceFolder } from "./evidence.js";
 import { branchFileName, check, lines, logsDir, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
 import { contradiction, findingsLeft, implementerPrompt } from "./implementer-prompt.js";
 import { platformsChanged, type Platform } from "./platforms.js";
 import { completionSignal } from "./prompt-parts.js";
 import { answeredOpenFindings, firstReview, pullRequestDraft, reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
-import { copyFileOut, guestExec, guestRepo, quote, repoExec, tartSandbox } from "./tart.js";
+import { copyFileOut, copyFilesOut, guestExec, guestRepo, quote, repoExec, tartSandbox } from "./tart.js";
 import { verifierPrompt } from "./verifier-prompt.js";
 
 const sandcastleSyncBase = "refs/sandcastle/sync-base";
 const guestBundle = "/tmp/sandbox-commits.bundle";
-const guestEvidence = `${dirname(guestRepo)}/afk-evidence`;
+export const guestEvidence = `${dirname(guestRepo)}/afk-evidence`;
 const manifestFile = "manifest.json";
 
 const worktreesDir = ({ configDir }: Host) => `${configDir}worktrees/`;
@@ -58,6 +59,7 @@ function platformsChangedBetween(host: Host, platforms: readonly Platform[], bas
 }
 
 export interface BehaviorCheckRun {
+  readonly issueNumber: number;
   readonly verifySkill: string;
   readonly base: string;
   readonly head: string;
@@ -68,6 +70,7 @@ export interface BehaviorCheckRun {
 interface AgentSandbox extends Omit<Session, "inspect"> {
   runAgent(name: string, logName: string, prompt: string): Promise<{ output: string; log: string }>;
   verify(run: BehaviorCheckRun): Promise<VerifierRun>;
+  copyEvidenceOut(issueNumber: number, head: string): Promise<{ folder: string; files: EvidenceFile[] }>;
   inspect(base: string): Promise<WorktreeState>;
   putBack(head: string): Promise<void>;
   remove(): Promise<void>;
@@ -153,12 +156,11 @@ export async function openSandbox(loop: Loop, host: Host, vm: string, branch: st
       return bytes && name ? [{ name, bytes: Number(bytes) }] : [];
     });
   };
-  const readManifest = async () => {
-    const hostManifest = `${runMarker(host, branch)}.${manifestFile}`;
-    await copyFileOut(vm, `${guestEvidence}/${manifestFile}`, hostManifest);
-    const text = readFileSync(hostManifest, "utf8");
-    rmSync(hostManifest);
-    return text;
+  const copyEvidenceOut: AgentSandbox["copyEvidenceOut"] = async (issueNumber, head) => {
+    const files = await evidenceFiles();
+    const folder = hostEvidenceFolder(host, issueNumber, head);
+    copyFilesOut(vm, guestEvidence, files.map(({ name }) => name), folder);
+    return { folder, files };
   };
 
   const putBack: AgentSandbox["putBack"] = async (head) => {
@@ -172,17 +174,18 @@ export async function openSandbox(loop: Loop, host: Host, vm: string, branch: st
   return {
     exec: repoExec(vm),
     runAgent,
-    async verify({ verifySkill, base, head, logName, prompt }) {
+    copyEvidenceOut,
+    async verify({ issueNumber, verifySkill, base, head, logName, prompt }) {
       const skillFolder = `.claude/skills/${verifySkill}`;
       await guestShell(`cd ${quote(guestRepo)} && rm -rf ${quote(skillFolder)} && git checkout ${base} -- ${quote(skillFolder)}`);
       await guestShell(`rm -rf ${quote(guestEvidence)} && mkdir -p ${quote(guestEvidence)}`);
       const run = await runAgent("Verifier", logName, prompt);
       const runHead = await guestGit("rev-parse HEAD");
       const dirty = (await guestGit(`status --porcelain --untracked-files=all -- . ${quote(`:(exclude)${skillFolder}`)}`)) !== "";
-      const files = await evidenceFiles();
-      const manifest = files.some(({ name }) => name === manifestFile) ? await readManifest() : undefined;
+      const { folder, files } = await copyEvidenceOut(issueNumber, head);
+      const manifest = files.some(({ name }) => name === manifestFile) ? readFileSync(`${folder}${manifestFile}`, "utf8") : undefined;
       if (!dirty && runHead === head) await putBack(head);
-      return { log: run.log, ...(manifest === undefined ? {} : { manifest }), files: files.filter(({ name }) => name !== manifestFile), head: runHead, dirty };
+      return { log: run.log, evidence: `${relative(host.repoRoot, folder)}/`, ...(manifest === undefined ? {} : { manifest }), files: files.filter(({ name }) => name !== manifestFile), head: runHead, dirty };
     },
     async inspect(base) {
       const head = await guestGit("rev-parse HEAD");
@@ -252,7 +255,7 @@ export function sandcastleAgents(loop: Loop, host: Host): Agents {
         },
         async verify(verifySkill, head) {
           const prompt = verifierPrompt({ repo: loop.repo, issue, branch, base, head, verifySkill });
-          return sandbox.verify({ verifySkill, base, head, logName: logName("Verifier"), prompt });
+          return sandbox.verify({ issueNumber: issue.number, verifySkill, base, head, logName: logName("Verifier"), prompt });
         },
         putBack: sandbox.putBack,
         inspect: () => sandbox.inspect(base),
