@@ -1,6 +1,6 @@
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -155,10 +155,24 @@ export async function copyIn(vm: string, hostPath: string, guestPath: string) {
   }
 }
 
+export const copyOutChunkBytes = 192 * 1024;
+
+export function copyOutScripts(guestPath: string, bytes: number): string[] {
+  return Array.from({ length: Math.ceil(bytes / copyOutChunkBytes) }, (_, chunk) => `dd if=${quote(guestPath)} bs=${copyOutChunkBytes} skip=${chunk} count=1 2>/dev/null`);
+}
+
 export async function copyFileOut(vm: string, guestPath: string, hostPath: string) {
+  const what = `copy of ${basename(guestPath)} out of ${vm}`;
+  const size = await guestExec(vm, `stat -f%z ${quote(guestPath)}`);
+  check(size.exitCode === 0, `${what} failed: ${size.stderr}`);
+  const bytes = Number(size.stdout.trim());
   await mkdir(dirname(hostPath), { recursive: true });
-  const read = guestProcess(vm, `cat ${quote(guestPath)}`, "ignore");
-  await Promise.all([pipeline(read.stdout!, createWriteStream(hostPath)), finished(read, `copy of ${basename(guestPath)} out of ${vm}`)]);
+  await writeFile(hostPath, "");
+  for (const script of copyOutScripts(guestPath, bytes)) {
+    const read = guestProcess(vm, script, "ignore");
+    await Promise.all([pipeline(read.stdout!, createWriteStream(hostPath, { flags: "a" })), finished(read, what)]);
+  }
+  check(statSync(hostPath).size === bytes, `${what} gave ${statSync(hostPath).size} of ${bytes} bytes`);
 }
 
 export const sandboxEnvFile = "~/.sandbox.env";
