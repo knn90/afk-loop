@@ -373,7 +373,7 @@ describe("reviewerPrompt, Verify skill", () => {
 
     assert.ok(
       prompt.includes(
-        `- The Verify skill is \`.claude/skills/verify-web/\`, and its Driver is the files its \`SKILL.md\` runs to drive the app. For each file of the Verify skill the diff edits, raise an Open finding with its \`path\`: ${skillFinding} For each Driver file the diff edits, the same with its Driver: ${driverFinding}\n`,
+        `- The Verify skill is \`.claude/skills/verify-web/\`, and its Driver is the files its \`SKILL.md\` runs to drive the app. For each file of the Verify skill the diff edits, raise an Open finding with its \`path\`: ${skillFinding} For each Driver file the diff edits, the same for the Driver: ${driverFinding}\n`,
       ),
     );
   });
