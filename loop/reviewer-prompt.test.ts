@@ -364,7 +364,7 @@ describe("reviewerPrompt, Verify skill", () => {
   const skillFinding =
     "`This PR edits the Verify skill: <path>. The Behavior check used the base branch's copy, so this edit was not checked. Keep it, or move it to a maintain-verification-skill run.`";
   const driverFinding =
-    "`This PR edits its Driver: <path>. The Behavior check used the base branch's copy, so this edit was not checked. Keep it, or move it to a maintain-verification-skill run.`";
+    "`This PR edits the Verify skill's Driver: <path>. The Behavior check used the base branch's copy, so this edit was not checked. Keep it, or move it to a maintain-verification-skill run.`";
 
   test("raises an Open finding with its path for each edited Verify skill or Driver file, finding the Driver through SKILL.md", () => {
     const sut = makeSUT();

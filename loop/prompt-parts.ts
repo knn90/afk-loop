@@ -113,6 +113,6 @@ function editFinding(edited: string): string {
 export function verifySkillFindings({ platforms }: Project): string {
   const skills = verifySkills(platforms);
   return skills
-    ? `\n- The Verify skill is ${skills}, and its Driver is ${drivesTheApp}. For each file of the Verify skill the diff edits, raise an Open finding with its \`path\`: ${editFinding("the Verify skill")} For each Driver file the diff edits, the same with its Driver: ${editFinding("its Driver")}`
+    ? `\n- The Verify skill is ${skills}, and its Driver is ${drivesTheApp}. For each file of the Verify skill the diff edits, raise an Open finding with its \`path\`: ${editFinding("the Verify skill")} For each Driver file the diff edits, the same for the Driver: ${editFinding("the Verify skill's Driver")}`
     : "";
 }
