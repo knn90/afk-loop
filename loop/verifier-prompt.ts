@@ -33,7 +33,7 @@ How to work:
 - ${glossaryRule}
 - Read the branch diff, \`git diff ${base}...HEAD\`, to see what changed.
 - Choose the criteria to check: every item under \`## Acceptance criteria\`, and under \`## Manual check\` if the issue has one, that can be seen in the running app. Every other item is skipped as "not observable in the app". For an item only partly seen in the app, check the part that is, and say in \`observed\` which part was not seen.
-- Also check regressions: for each feature the diff touches that has a feature file, drive that file's journeys. Each journey is a criterion to check, named by its sub-feature ID or step name and one short sentence, not the whole recipe. A journey the feature file does not map yet is skipped as "not mapped in the feature file".
+- Also check regressions: for each feature the diff touches that has a feature file, drive that file's journeys. Each journey is a criterion to check, named by its sub-feature ID or step name and one short sentence, not its full list of steps. A journey the feature file does not map yet is skipped as "not mapped in the feature file".
 - Where a criterion from the issue and a journey disagree, the criterion holds: skip the journey as "changed by this issue: feature file out of date".
 - Draft no Feature files.
 - Invoke the \`${verifySkill}\` skill with the Skill tool and read its feature map. For each criterion to check, find the feature file that covers it. With none, drive with the skill's Drive commands alone, taking every element name from the live accessibility tree. Never invent a path, element name or command.
