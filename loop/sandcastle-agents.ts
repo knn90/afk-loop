@@ -13,6 +13,8 @@ import { answeredOpenFindings, firstReview, pullRequestDraft, reviewerPrompt, wr
 import { copyFileOut, copyFilesOut, guestEvidence, guestExec, guestRepo, quote, repoExec, tartSandbox } from "./tart.js";
 import { verifierPrompt } from "./verifier-prompt.js";
 
+export const gitIdentity = ["user.name", "user.email"] as const;
+
 const sandcastleSyncBase = "refs/sandcastle/sync-base";
 const guestBundle = "/tmp/sandbox-commits.bundle";
 const manifestFile = "manifest.json";
@@ -105,7 +107,7 @@ export async function openSandbox(loop: Loop, host: Host, vm: string, branch: st
     return result.stdout.trim();
   };
   const seed = worktree("rev-parse", "HEAD");
-  for (const key of ["user.name", "user.email"]) await guestGit(`config ${key} ${quote(host.git("config", key).trim())}`);
+  for (const key of gitIdentity) await guestGit(`config ${key} ${quote(host.git("config", key).trim())}`);
   const fetchFromSandbox = async (head: string) => {
     check(/^[0-9a-f]{40}$/.test(head), `Sandbox HEAD is not a commit id: ${head}`);
     if (succeeds(host, "rev-parse", "--verify", "--quiet", `${head}^{commit}`)) return;
