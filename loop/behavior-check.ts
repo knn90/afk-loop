@@ -146,7 +146,7 @@ export function attachList({ claims, video }: BehaviorReading): string[] {
 }
 
 export function behaviorSection({ outcome, reason, claims, skipped, video, droppedVideo, head, verifySkill, log, evidence }: BehaviorCheck, uploadError?: string): string {
-  const media = (file: string) => (uploadError === undefined ? `${evidence}${file}` : `\`${file}\``);
+  const media = (file: string) => (uploadError === undefined ? `![${file}](${evidence}${file})` : `\`${file}\``);
   const why = [outcome === "PASS" ? undefined : reason && sentence(reason), outcome === "INCONCLUSIVE" ? "Check the app by hand before merging" : undefined].filter(Boolean).join(". ");
   const claimLines = claims.map((claim) => {
     const tag = claim.kind === "regression" ? `, regression (\`${claim.feature}\`)` : claim.feature === null ? ", no feature file, driven with the Drive commands" : "";

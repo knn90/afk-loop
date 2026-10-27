@@ -9,6 +9,7 @@ import { defineLoop } from "./loop-config.js";
 
 const failed = "gh fails";
 const attachRejected = "stderr:";
+const attachPartly = "partly:";
 
 describe("githubTracker", () => {
   const sut = makeSUT();
@@ -82,6 +83,27 @@ describe("githubTracker, attachments GitHub rejects", () => {
 
     assert.equal(pullRequest, "https://github.com/acme/Habitat/pull/9");
     assert.deepEqual(sut.calls().at(-1), ["pr", "create", "-R", "acme/Habitat", "--base", "main", "--head", "issue/4-streak", "--title", "[#4] - Streak", "--body", "Closes #4. Not attached: HTTP 422: Unprocessable Entity", "--label", "ready-for-human"]);
+  });
+});
+
+describe("githubTracker, attachments that only partly upload", () => {
+  const sut = makeSUT({ "--attach": `${attachPartly}failed to upload e/drive.mp4` });
+  before(sut.install);
+  after(sut.uninstall);
+
+  test("the PR gh opened keeps its URL and gets the body for the gh error, with no second PR", async () => {
+    const tracker = githubTracker(defineLoop(config), hostAt(tmpdir()));
+
+    const pullRequest = await tracker.openPullRequest({
+      branch: "issue/4-streak",
+      title: "[#4] - Streak",
+      body: "Closes #4.",
+      attachments: { files: ["e/streak.png", "e/drive.mp4"], unattached: (ghError) => `Closes #4. Not attached: ${ghError}` },
+    });
+
+    assert.equal(pullRequest, "https://github.com/acme/Habitat/pull/9");
+    assert.equal(sut.calls().filter((call) => call[1] === "create").length, 1);
+    assert.deepEqual(sut.calls().at(-1), ["pr", "edit", "https://github.com/acme/Habitat/pull/9", "-R", "acme/Habitat", "--body", "Closes #4. Not attached: failed to upload e/drive.mp4"]);
   });
 });
 
@@ -197,6 +219,11 @@ if (args.includes("--input")) {
 const responses = ${JSON.stringify(responses)};
 const asked = Object.keys(responses).find((key) => args.some((arg) => arg.includes(key)) || args.join(" ").startsWith(key));
 if (asked !== undefined && responses[asked] === ${JSON.stringify(failed)}) process.exit(1);
+if (asked !== undefined && responses[asked].startsWith(${JSON.stringify(attachPartly)})) {
+  console.log("https://github.com/acme/Habitat/pull/9");
+  process.stderr.write(responses[asked].slice(${JSON.stringify(attachPartly)}.length) + "\\n");
+  process.exit(1);
+}
 if (asked !== undefined && responses[asked].startsWith(${JSON.stringify(attachRejected)})) {
   process.stderr.write(responses[asked].slice(${JSON.stringify(attachRejected)}.length) + "\\n");
   process.exit(1);

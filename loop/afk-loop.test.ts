@@ -996,7 +996,7 @@ describe("runAfkLoop, Behavior check", () => {
         [
           "Verified: the Test run passed on the reviewed commit (the ios tests).",
           `Behavior check: PASS on \`head-1\`, ${by}`,
-          "- **Met**: The streak counts the day\n  The streak read 1 day.\n  .sandcastle/evidence/1-head-1/streak.png",
+          "- **Met**: The streak counts the day\n  The streak read 1 day.\n  ![streak.png](.sandcastle/evidence/1-head-1/streak.png)",
         ].join("\n\n"),
       ),
     );
@@ -1038,12 +1038,12 @@ describe("runAfkLoop, Behavior check", () => {
         [
           `Behavior check: FAIL on \`head-1\`: The streak stays at 0 days, ${by}`,
           [
-            "- **Not met**: The streak counts the day\n  The streak read 0 days.\n  .sandcastle/evidence/1-head-1/streak.png",
-            "- **Met**, regression (`today.md`): Today: check off Meditate\n  All 1 marked.\n  .sandcastle/evidence/1-head-1/check-off.png\n  .sandcastle/evidence/1-head-1/streak.png",
-            "- **Met**, no feature file, driven with the Drive commands: The streak shows a flame\n  A flame by the count.\n  .sandcastle/evidence/1-head-1/flame.png",
+            "- **Not met**: The streak counts the day\n  The streak read 0 days.\n  ![streak.png](.sandcastle/evidence/1-head-1/streak.png)",
+            "- **Met**, regression (`today.md`): Today: check off Meditate\n  All 1 marked.\n  ![check-off.png](.sandcastle/evidence/1-head-1/check-off.png)\n  ![streak.png](.sandcastle/evidence/1-head-1/streak.png)",
+            "- **Met**, no feature file, driven with the Drive commands: The streak shows a flame\n  A flame by the count.\n  ![flame.png](.sandcastle/evidence/1-head-1/flame.png)",
           ].join("\n"),
           "Not checked:\n- StreakStore has unit tests: not observable in the app.\n- Today: the streak starts at 1 (`today.md`): changed by this issue: feature file out of date.",
-          "Video of the drive: .sandcastle/evidence/1-head-1/drive.mp4",
+          "Video of the drive: ![drive.mp4](.sandcastle/evidence/1-head-1/drive.mp4)",
         ].join("\n\n"),
       ),
     );
@@ -1113,7 +1113,7 @@ describe("runAfkLoop, Behavior check", () => {
 
     await sut.run();
 
-    assert.ok(prBody(tracker).endsWith("\n\nVideo of the drive: .sandcastle/evidence/1-head-1/drive.mp4"));
+    assert.ok(prBody(tracker).endsWith("\n\nVideo of the drive: ![drive.mp4](.sandcastle/evidence/1-head-1/drive.mp4)"));
     assert.deepEqual(tracker.pullRequests[0]?.attached, [".sandcastle/evidence/1-head-1/streak.png", ".sandcastle/evidence/1-head-1/drive.mp4"]);
   });
 

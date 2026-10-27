@@ -71,6 +71,10 @@ function ghError(error: unknown): string {
   return (stderr || String(error)).replace(/\s+/g, " ");
 }
 
+function openedPullRequest(error: unknown): string | undefined {
+  return String((error as { stdout?: unknown }).stdout ?? "").match(/https:\/\/github\.com\/\S+\/pull\/\d+/)?.[0];
+}
+
 export function githubTracker({ repo, baseBranch }: Loop, host: Host): Tracker {
   return {
     async backlog() {
@@ -95,6 +99,11 @@ export function githubTracker({ repo, baseBranch }: Loop, host: Host): Tracker {
       try {
         return create(body, ...attachments.files.flatMap((file) => ["--attach", file]));
       } catch (error) {
+        const opened = openedPullRequest(error);
+        if (opened) {
+          ghAt(host.repoRoot, "pr", "edit", opened, "-R", repo, "--body", attachments.unattached(ghError(error)));
+          return opened;
+        }
         try {
           return create(attachments.unattached(ghError(error)));
         } catch {
