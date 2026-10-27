@@ -27,6 +27,10 @@ export function folder(platform: Platform): string {
   return `${platform.folder}/`;
 }
 
+export function verifySkills(platforms: readonly Platform[]): string[] {
+  return platforms.flatMap((platform) => (platform.verifySkill ? [platform.verifySkill] : []));
+}
+
 export function verifySkillFolder(skill: string): string {
   return `.claude/skills/${skill}/`;
 }

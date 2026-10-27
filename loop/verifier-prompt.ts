@@ -1,6 +1,7 @@
 import type { Issue } from "./afk-loop.js";
-import { evidenceFolder, videoCapMb, type Manifest } from "./behavior-check.js";
+import { videoCapMb, type Manifest } from "./behavior-check.js";
 import { completionSignal, glossaryRule, issueBlock } from "./prompt-parts.js";
+import { guestEvidence } from "./tart.js";
 
 export interface VerifierBrief {
   readonly repo: string;
@@ -34,6 +35,7 @@ How to work:
 - Choose the criteria to check: every item under \`## Acceptance criteria\`, and under \`## Manual check\` if the issue has one, that can be seen in the running app. Every other item is skipped as "not observable in the app". For an item only partly seen in the app, check the part that is, and say in \`observed\` which part was not seen.
 - Also check regressions: for each feature the diff touches that has a feature file, drive that file's journeys. Each journey is a criterion to check, named by its sub-feature ID or step name and one short sentence, not the whole recipe. A journey the feature file does not map yet is skipped as "not mapped in the feature file".
 - Where a criterion from the issue and a journey disagree, the criterion holds: skip the journey as "changed by this issue: feature file out of date".
+- Draft no Feature files.
 - Invoke the \`${verifySkill}\` skill with the Skill tool and read its feature map. For each criterion to check, find the feature file that covers it. With none, drive with the skill's Drive commands alone, taking every element name from the live accessibility tree. Never invent a path, element name or command.
 - Before you drive: confirm, with the skill, that Launch, Doctor, a screenshot and a video recording each work.
 - Drive the app through each criterion as its feature file says. For each, take at least one screenshot that shows the result. Record at most one video, at most ${videoCapMb} MB.
@@ -42,7 +44,7 @@ How to work:
   - INCONCLUSIVE: a step before driving does not work without the app crashing, or you could not reach or finish checking a criterion. Say the command you tried. Stop at the first such step.
   - PASS: every checked criterion is met, each with a screenshot.
   - With no criterion observable in the app, the outcome is INCONCLUSIVE.
-- Evidence: copy the screenshots and video you choose into \`${evidenceFolder}/\`, flat, as \`.png\` and \`.mp4\`. The Host emptied it before your run. Then write \`${evidenceFolder}/manifest.json\`, the Evidence manifest, in this shape:
+- Behavior evidence: copy the screenshots and video you choose into \`${guestEvidence}/\`, flat, as \`.png\` and \`.mp4\`. The Host emptied it before your run. Then write \`${guestEvidence}/manifest.json\`, the Evidence manifest, in this shape:
 
 \`\`\`json
 ${JSON.stringify(manifestShape, null, 2)}
@@ -56,5 +58,5 @@ ${JSON.stringify(manifestShape, null, 2)}
   - Only files the manifest lists reach the PR.
 - This Sandbox is a macOS VM. The Host reads only the Evidence manifest and the files it lists, then puts them on the PR: this Sandbox has no GitHub access.
 
-Done means \`${evidenceFolder}/manifest.json\` holds the outcome and every criterion is in \`claims\` or \`skipped\`. End your reply with ${completionSignal}.`;
+Done means \`${guestEvidence}/manifest.json\` holds the outcome and every criterion is in \`claims\` or \`skipped\`. End your reply with ${completionSignal}.`;
 }

@@ -12,7 +12,7 @@ import {
 } from "./loop-rules.js";
 import { attachList, behaviorSection, hostReads, inconclusive, noBehaviorCheck, type BehaviorCheck, type EvidenceFile } from "./behavior-check.js";
 import { linkedIssueNumbers } from "./linked-issues.js";
-import { testChangedPlatforms, verifiedLine, type Platform } from "./platforms.js";
+import { testChangedPlatforms, verifiedLine, verifySkills, type Platform } from "./platforms.js";
 
 export interface Issue {
   readonly number: number;
@@ -213,7 +213,8 @@ const fixesNotIncluded = "The Fix round failed its Test run, so its fixes are no
 const noneFixed = "The Fix round failed, so none of these Fixable findings is fixed:";
 const unreadableReview = "The Reviewer's reply gives no <fixable-findings> block and <open-findings> block the Host can read, so its findings are unknown.";
 const unchecked = "The Wrap-up gave no Open findings the Host can read, so whether these Fixable findings are fixed is unchecked:";
-const acceptanceCriteria = "## Acceptance criteria";
+const acceptanceCriteriaTitle = "Acceptance criteria";
+const acceptanceCriteria = `## ${acceptanceCriteriaTitle}`;
 const reviewerSays = `${loopMarker}\n**The AFK loop's Reviewer:**`;
 
 export function issueBranchPrefix(issueNumber: number): string {
@@ -275,7 +276,8 @@ async function work(issue: Issue, loop: AfkLoopOptions): Promise<Outcome> {
 
 function missingAcceptanceCriteria({ body }: Issue): NoAcceptanceCriteria["missing"] | undefined {
   const lines = body.split(/\r?\n/);
-  const start = lines.findIndex((line) => /^##\s+Acceptance criteria\s*$/i.test(line.trim()));
+  const heading = new RegExp(`^##\\s+${acceptanceCriteriaTitle}\\s*$`, "i");
+  const start = lines.findIndex((line) => heading.test(line.trim()));
   if (start === -1) return "section";
   const rest = lines.slice(start + 1);
   const end = rest.findIndex((line) => /^#{1,2}\s/.test(line));
@@ -381,18 +383,22 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
 }
 
 async function checkBehavior(session: IssueSession, head: string, platforms: readonly Platform[]): Promise<BehaviorCheck | undefined> {
-  const verifySkill = platforms.find((platform) => platform.verifySkill)?.verifySkill;
+  const [verifySkill] = verifySkills(platforms);
   if (!verifySkill) return undefined;
-  const run = await session.verify(verifySkill, head);
-  const changed = run.dirty || run.head !== head;
-  if (changed) await session.putBack(head);
-  const reading = changed ? inconclusive("the Verifier changed the branch") : hostReads(run.manifest, head, run.files);
-  return { ...reading, head, verifySkill, log: run.log, evidence: run.evidence };
+  try {
+    const run = await session.verify(verifySkill, head);
+    const changed = run.dirty || run.head !== head;
+    if (changed) await session.putBack(head);
+    const reading = changed ? inconclusive("the Verifier changed the branch") : hostReads(run.manifest, head, run.files);
+    return { ...reading, head, verifySkill, log: run.log, evidence: run.evidence };
+  } catch (error) {
+    return { ...inconclusive(`the Behavior check failed in the Sandbox: ${error instanceof Error ? error.message : String(error)}`), head, verifySkill };
+  }
 }
 
 function behaviorLines(platforms: readonly Platform[], check?: BehaviorCheck, uploadError?: string): string[] {
   if (check) return [behaviorSection(check, uploadError)];
-  return platforms.some((platform) => platform.verifySkill) ? [noBehaviorCheck] : [];
+  return verifySkills(platforms).length > 0 ? [noBehaviorCheck] : [];
 }
 
 function finalOpenFindings({ fixableFindings, openFindings, failed }: FixRound, wrapUp?: readonly OpenFinding[]): readonly OpenFinding[] {

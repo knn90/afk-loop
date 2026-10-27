@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { shortSha } from "./behavior-check.js";
 import type { Host } from "./host.js";
 
 type ConfigDir = Pick<Host, "configDir">;
@@ -13,7 +14,7 @@ export function hostEvidenceFolder(host: ConfigDir, issueNumber: number, head: s
     mkdirSync(root, { recursive: true });
     writeFileSync(`${root}.gitignore`, "*\n");
   }
-  const folder = `${root}${issueNumber}-${head.slice(0, 7)}/`;
+  const folder = `${root}${issueNumber}-${shortSha(head)}/`;
   mkdirSync(folder, { recursive: true });
   return folder;
 }

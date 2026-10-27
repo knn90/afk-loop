@@ -12,6 +12,7 @@ import { check } from "./host.js";
 const localTart = `${homedir()}/.local/bin/tart`;
 export const tartBin = existsSync(localTart) ? localTart : "tart";
 export const guestRepo = "/Users/admin/workspace";
+export const guestEvidence = `${dirname(guestRepo)}/afk-evidence`;
 const guestUser = basename(dirname(guestRepo));
 export const timedOutExitCode = 124;
 const bootTimeoutMs = 5 * 60 * 1000;

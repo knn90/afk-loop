@@ -1,7 +1,7 @@
 import { gh, lines, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
 import { readyForAgent, readyForHuman } from "./loop-rules.js";
-import { verifySkillFile, type Platform } from "./platforms.js";
+import { verifySkillFile, verifySkills, type Platform } from "./platforms.js";
 import { remoteBase } from "./sandcastle-agents.js";
 
 export interface RepoRequirements {
@@ -22,7 +22,7 @@ export async function checkRepo({ repo, baseBranch, platforms }: RepoRequirement
   const files = [
     ...requiredFiles,
     ...platforms.map((platform) => platform.standards),
-    ...platforms.flatMap((platform) => (platform.verifySkill ? [verifySkillFile(platform.verifySkill)] : [])),
+    ...verifySkills(platforms).map(verifySkillFile),
   ];
   const missingFiles = (await Promise.all(files.map(async (path) => ((await probe.isOnBase(path)) ? [] : [path])))).flat();
   const labels = (await probe.labels()).map((label) => label.toLowerCase());

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, relative } from "node:path";
+import { relative } from "node:path";
 import { claudeCode, createSandbox } from "@ai-hero/sandcastle";
 import { issueBranchPrefix, type Agents, type Session, type VerifierRun, type WorktreeState } from "./afk-loop.js";
 import type { EvidenceFile } from "./behavior-check.js";
@@ -7,15 +7,14 @@ import { hostEvidenceFolder } from "./evidence.js";
 import { branchFileName, check, lines, logsDir, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
 import { contradiction, findingsLeft, implementerPrompt } from "./implementer-prompt.js";
-import { platformsChanged, type Platform } from "./platforms.js";
+import { platformsChanged, verifySkillFolder, type Platform } from "./platforms.js";
 import { completionSignal } from "./prompt-parts.js";
 import { answeredOpenFindings, firstReview, pullRequestDraft, reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
-import { copyFileOut, copyFilesOut, guestExec, guestRepo, quote, repoExec, tartSandbox } from "./tart.js";
+import { copyFileOut, copyFilesOut, guestEvidence, guestExec, guestRepo, quote, repoExec, tartSandbox } from "./tart.js";
 import { verifierPrompt } from "./verifier-prompt.js";
 
 const sandcastleSyncBase = "refs/sandcastle/sync-base";
 const guestBundle = "/tmp/sandbox-commits.bundle";
-export const guestEvidence = `${dirname(guestRepo)}/afk-evidence`;
 const manifestFile = "manifest.json";
 
 const worktreesDir = ({ configDir }: Host) => `${configDir}worktrees/`;
@@ -176,7 +175,7 @@ export async function openSandbox(loop: Loop, host: Host, vm: string, branch: st
     runAgent,
     copyEvidenceOut,
     async verify({ issueNumber, verifySkill, base, head, logName, prompt }) {
-      const skillFolder = `.claude/skills/${verifySkill}`;
+      const skillFolder = verifySkillFolder(verifySkill);
       await guestShell(`cd ${quote(guestRepo)} && rm -rf ${quote(skillFolder)} && git checkout ${base} -- ${quote(skillFolder)}`);
       await guestShell(`rm -rf ${quote(guestEvidence)} && mkdir -p ${quote(guestEvidence)}`);
       const run = await runAgent("Verifier", logName, prompt);

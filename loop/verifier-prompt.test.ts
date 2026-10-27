@@ -54,11 +54,17 @@ describe("verifierPrompt", () => {
     assert.ok(prompt.includes("For an item only partly seen in the app, check the part that is, and say in `observed` which part was not seen."));
   });
 
+  test("drafts no Feature files", () => {
+    const prompt = makeSUT();
+
+    assert.ok(prompt.includes("- Draft no Feature files."));
+  });
+
   test("writes the Evidence manifest to the evidence folder, with the fixed set of reasons for skipping", () => {
     const prompt = makeSUT();
 
-    assert.ok(prompt.includes("copy the screenshots and video you choose into `~/afk-evidence/`, flat, as `.png` and `.mp4`."));
-    assert.ok(prompt.includes("Then write `~/afk-evidence/manifest.json`, the Evidence manifest, in this shape:"));
+    assert.ok(prompt.includes("- Behavior evidence: copy the screenshots and video you choose into `/Users/admin/afk-evidence/`, flat, as `.png` and `.mp4`."));
+    assert.ok(prompt.includes("Then write `/Users/admin/afk-evidence/manifest.json`, the Evidence manifest, in this shape:"));
     assert.ok(prompt.includes('"outcome": "PASS"'));
     assert.ok(prompt.includes('`why` is one of: "not observable in the app", "changed by this issue: feature file out of date", "not mapped in the feature file".'));
     assert.ok(prompt.includes("Record at most one video, at most 10 MB."));

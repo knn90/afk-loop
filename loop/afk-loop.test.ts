@@ -1067,8 +1067,10 @@ describe("runAfkLoop, Behavior check", () => {
     ["an unreadable manifest", () => ({ manifest: "{ not json" }), "Evidence manifest unreadable"],
     ["a manifest of the wrong shape", () => ({ manifest: JSON.stringify({ outcome: "PASS", head: "head-1" }) }), "Evidence manifest unreadable"],
     ["a manifest for another head", () => ({ manifest: manifest("0ab12cdef") }), "Evidence manifest is for 0ab12cd, not head-1"],
-    ["a listed file that is missing", () => ({ files: [] }), "listed file streak.png not in ~/afk-evidence"],
-    ["a listed file with a / in its name", () => ({ manifest: manifest("head-1", { claims: [{ ...metClaim, screenshots: ["shots/streak.png"] }] }), files: [{ name: "shots/streak.png", bytes: 1 }] }), "listed file shots/streak.png not in ~/afk-evidence"],
+    ["a listed file that is missing", () => ({ files: [] }), "listed file streak.png not in /Users/admin/afk-evidence"],
+    ["a listed file with a / in its name", () => ({ manifest: manifest("head-1", { claims: [{ ...metClaim, screenshots: ["shots/streak.png"] }] }), files: [{ name: "shots/streak.png", bytes: 1 }] }), "listed file shots/streak.png not in /Users/admin/afk-evidence"],
+    ["a listed screenshot that is not a .png", () => ({ manifest: manifest("head-1", { claims: [{ ...metClaim, screenshots: ["streak.jpg"] }] }), files: [{ name: "streak.jpg", bytes: 1 }] }), "listed screenshot streak.jpg is not a .png"],
+    ["a listed video that is not an .mp4", () => ({ manifest: manifest("head-1", { video: "drive.mov" }), files: [{ name: "streak.png", bytes: 1 }, { name: "drive.mov", bytes: 1 }] }), "listed video drive.mov is not an .mp4"],
   ] as const) {
     test(`${what} gives INCONCLUSIVE with that reason, no claims and no attachment`, async () => {
       const { sut, tracker } = check({ verifier });
@@ -1149,6 +1151,20 @@ describe("runAfkLoop, Behavior check", () => {
       assert.deepEqual(tracker.pullRequests[0]?.attached, []);
     });
   }
+
+  test("a Behavior check that fails in the Sandbox still opens the PR, INCONCLUSIVE with the error", async () => {
+    const { sut, tracker } = check({
+      verifier: () => {
+        throw new Error("scp failed: connection reset");
+      },
+    });
+
+    const outcomes = await sut.run();
+
+    assert.equal(outcomes[0]?.kind, "pull-request");
+    assert.ok(prBody(tracker).endsWith("Behavior check: INCONCLUSIVE on `head-1`: the Behavior check failed in the Sandbox: scp failed: connection reset. Check the app by hand before merging, by the AFK loop's Verifier in the Sandbox with `verify-ios`."));
+    assert.deepEqual(tracker.pullRequests[0]?.attached, []);
+  });
 
   test("a branch that changes no Platform with a Verify skill gets no Verifier, and the PR says so", async () => {
     const { sut, tracker, calls } = check({ runs: { 1: [{ platforms: [web] }] } });

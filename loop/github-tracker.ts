@@ -95,7 +95,11 @@ export function githubTracker({ repo, baseBranch }: Loop, host: Host): Tracker {
       try {
         return create(body, ...attachments.files.flatMap((file) => ["--attach", file]));
       } catch (error) {
-        return create(attachments.unattached(ghError(error)));
+        try {
+          return create(attachments.unattached(ghError(error)));
+        } catch {
+          throw error;
+        }
       }
     },
 
