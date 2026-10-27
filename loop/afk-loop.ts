@@ -143,7 +143,7 @@ export interface TestRunner {
   rawLogPath(branch: string): string;
 }
 
-export type HandoffOutcome = {
+export type SessionHandoff = {
   readonly issue: number;
   readonly kind: "handoff";
   readonly branch: string;
@@ -152,6 +152,15 @@ export type HandoffOutcome = {
   | { readonly reason: "no-commits"; readonly lastReply: string; readonly implementerLog: string }
   | { readonly reason: "contradiction"; readonly contradiction: string; readonly implementerLog: string }
 );
+
+export interface NoAcceptanceCriteria {
+  readonly issue: number;
+  readonly kind: "handoff";
+  readonly reason: "no-acceptance-criteria";
+  readonly missing: "section" | "items";
+}
+
+export type HandoffOutcome = SessionHandoff | NoAcceptanceCriteria;
 
 export interface ReviewedOutcome {
   readonly issue: number;
@@ -186,6 +195,7 @@ const fixesNotIncluded = "The Fix round failed its Test run, so its fixes are no
 const noneFixed = "The Fix round failed, so none of these Fixable findings is fixed:";
 const unreadableReview = "The Reviewer's reply gives no <fixable-findings> block and <open-findings> block the Host can read, so its findings are unknown.";
 const unchecked = "The Wrap-up gave no Open findings the Host can read, so whether these Fixable findings are fixed is unchecked:";
+const acceptanceCriteria = "## Acceptance criteria";
 const reviewerSays = `${loopMarker}\n**The AFK loop's Reviewer:**`;
 
 export function issueBranchPrefix(issueNumber: number): string {
@@ -233,6 +243,8 @@ async function work(issue: Issue, loop: AfkLoopOptions): Promise<Outcome> {
   const localBranches = await loop.agents.localBranches(issue.number);
   const kept = localBranches.find((branch) => !branch.leftover);
   if (kept) return { issue: issue.number, kind: "local-branch", branch: kept.name };
+  const missing = missingAcceptanceCriteria(issue);
+  if (missing) return handOff(issue, { issue: issue.number, kind: "handoff", reason: "no-acceptance-criteria", missing }, loop.tracker);
   for (const leftover of localBranches) await loop.agents.discardLeftover(leftover.name);
 
   const outcome = await runSession(issue, loop);
@@ -241,6 +253,16 @@ async function work(issue: Issue, loop: AfkLoopOptions): Promise<Outcome> {
   const pullRequest = await openPullRequest(issue, outcome, loop);
   await postOpenFindings(pullRequest, outcome.openFindings, loop.tracker);
   return outcome;
+}
+
+function missingAcceptanceCriteria({ body }: Issue): NoAcceptanceCriteria["missing"] | undefined {
+  const lines = body.split(/\r?\n/);
+  const start = lines.findIndex((line) => /^##\s+Acceptance criteria\s*$/i.test(line.trim()));
+  if (start === -1) return "section";
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((line) => /^#{1,2}\s/.test(line));
+  const section = end === -1 ? rest : rest.slice(0, end);
+  return section.some((line) => /^\s*(?:[-*+]|\d+[.)])\s+(?!\[[ xX]\]\s*$)\S/.test(line)) ? undefined : "items";
 }
 
 async function runSession(issue: Issue, loop: AfkLoopOptions): Promise<Outcome> {
@@ -391,21 +413,25 @@ function bullet({ at, text }: OpenFinding): string {
 
 async function handOff(issue: Issue, handoff: HandoffOutcome, tracker: Tracker): Promise<HandoffOutcome> {
   await tracker.relabel(issue.number, { remove: readyForAgent, add: readyForHuman });
-  const { branch } = handoff;
   const { why, details, settle = "" } = describeHandoff(handoff);
-  await tracker.comment(
-    issue.number,
-    [
-      `${loopMarker}\n${handedOff} ${why}.`,
-      details,
-      `Nothing is pushed. What the session left, if anything, is on the Host: on the local branch \`${branch}\`, or uncommitted in its worktree.`,
-      `To requeue for the loop: ${settle}remove the local \`${branch}\` branch and its worktree, if they are still there, then relabel the issue \`${readyForAgent}\`.`,
-    ].join("\n\n"),
-  );
+  const requeue =
+    handoff.reason === "no-acceptance-criteria"
+      ? [`To requeue for the loop: add a \`${acceptanceCriteria}\` section with at least one item to this issue, then relabel the issue \`${readyForAgent}\`.`]
+      : [
+          `Nothing is pushed. What the session left, if anything, is on the Host: on the local branch \`${handoff.branch}\`, or uncommitted in its worktree.`,
+          `To requeue for the loop: ${settle}remove the local \`${handoff.branch}\` branch and its worktree, if they are still there, then relabel the issue \`${readyForAgent}\`.`,
+        ];
+  await tracker.comment(issue.number, [`${loopMarker}\n${handedOff} ${why}.`, details, ...requeue].join("\n\n"));
   return handoff;
 }
 
 export function describeHandoff(handoff: HandoffOutcome): { why: string; details: string; settle?: string } {
+  if (handoff.reason === "no-acceptance-criteria") {
+    return {
+      why: handoff.missing === "section" ? `the issue has no \`${acceptanceCriteria}\` section` : `the issue's \`${acceptanceCriteria}\` section has no items`,
+      details: `The loop works an issue only when its \`${acceptanceCriteria}\` section has at least one item. No Sandbox was opened and no Attempt was spent.`,
+    };
+  }
   if (handoff.reason === "contradiction") {
     return {
       why: "the Implementer found a Contradiction in the issue",

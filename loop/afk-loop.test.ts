@@ -66,7 +66,7 @@ describe("runAfkLoop", () => {
 
   test("an issue naming another issue is started with that issue's text", async () => {
     const verified = { number: 224, title: "Verify the stack", body: "Catalog", comments: [] };
-    const { sut, agents } = makeSUT({ issues: [issue(1, { body: "Start from #224.\n\n## Blocked by\n\n- #229" })], linkedIssues: [verified, { ...verified, number: 229 }] });
+    const { sut, agents } = makeSUT({ issues: [issue(1, { body: `Start from #224.\n\n## Blocked by\n\n- #229\n\n${criteria}` })], linkedIssues: [verified, { ...verified, number: 229 }] });
 
     await sut.run();
 
@@ -83,7 +83,7 @@ describe("runAfkLoop", () => {
 
   test("an issue named in a comment is a Linked issue, except under the comment's Parent and Blocked by headings", async () => {
     const { sut, agents } = makeSUT({
-      issues: [issue(1, { body: "## Blocked by\n\n- #229" })],
+      issues: [issue(1, { body: `## Blocked by\n\n- #229\n\n${criteria}` })],
       comments: { 1: ["## Parent\n\n#226", "Not the receiver of #250; #229 has the stream."] },
       linkedIssues: [226, 229, 250].map(linked),
     });
@@ -95,7 +95,7 @@ describe("runAfkLoop", () => {
 
   test("the body and the comments share one limit of Linked issues, the body's first", async () => {
     const { sut, agents } = makeSUT({
-      issues: [issue(1, { body: "#11 #12 #13" })],
+      issues: [issue(1, { body: `#11 #12 #13\n\n${criteria}` })],
       comments: { 1: ["#14 #15", "#16"] },
       linkedIssues: [16, 15, 14, 13, 12, 11].map(linked),
     });
@@ -941,6 +941,43 @@ describe("runAfkLoop, routing", () => {
   });
 });
 
+describe("runAfkLoop, Acceptance criteria", () => {
+  test("an issue with no Acceptance criteria section is a Handoff naming the section, with no Sandbox and no Attempt, and the loop moves on", async () => {
+    const { sut, agents, tracker, calls } = makeSUT({ issues: [issue(1, { body: "Count the streak.\n\n## Blocked by\n\nNone" }), issue(2)] });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes[0], { issue: 1, kind: "handoff", reason: "no-acceptance-criteria", missing: "section" });
+    assert.deepEqual(calls.slice(0, 2), ["relabel #1: -ready-for-agent +ready-for-human", "comment on #1"]);
+    assert.deepEqual(tracker.comments, [
+      [
+        "<!-- afk-loop -->\nHanded off to a human: the issue has no `## Acceptance criteria` section.",
+        "The loop works an issue only when its `## Acceptance criteria` section has at least one item. No Sandbox was opened and no Attempt was spent.",
+        "To requeue for the loop: add a `## Acceptance criteria` section with at least one item to this issue, then relabel the issue `ready-for-agent`.",
+      ].join("\n\n"),
+    ]);
+    assert.deepEqual(agents.startedIssues, [2]);
+  });
+
+  test("an issue whose Acceptance criteria section has no items is the same Handoff, naming the empty section", async () => {
+    const { sut, agents, tracker } = makeSUT({ issues: [issue(1, { body: "## Acceptance criteria\n\n- [ ]\n\nTBD\n\n## Blocked by\n\n- #2" })] });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes, [{ issue: 1, kind: "handoff", reason: "no-acceptance-criteria", missing: "items" }]);
+    assert.match(tracker.comments[0] ?? "", /^<!-- afk-loop -->\nHanded off to a human: the issue's `## Acceptance criteria` section has no items\.\n\n/);
+    assert.deepEqual(agents.startedIssues, []);
+  });
+
+  test("an issue with one Acceptance criteria item, under any heading level after it, is worked", async () => {
+    const { sut, agents } = makeSUT({ issues: [issue(1, { body: "## Acceptance criteria\n\n### Streak\n\n1. The streak counts the day\n\n## Notes" })] });
+
+    await sut.run();
+
+    assert.deepEqual(agents.startedIssues, [1]);
+  });
+});
+
 describe("runAfkLoop, blocked issues", () => {
   test("a blocked issue stays blocked behind the open PR", async () => {
     const { sut, agents } = makeSUT({ issues: [issue(1), issue(2, { openBlockers: 1 })] });
@@ -1007,8 +1044,10 @@ function linked(number: number): LinkedIssue {
   return { number, title: `Issue ${number}`, body: "", comments: [] };
 }
 
+const criteria = "## Acceptance criteria\n\n- [ ] The streak counts the day";
+
 function issue(number: number, overrides: Partial<Issue> = {}): Issue {
-  return { number, title: `Issue ${number}`, body: "", labels: ["ready-for-agent"], openBlockers: 0, ...overrides };
+  return { number, title: `Issue ${number}`, body: criteria, labels: ["ready-for-agent"], openBlockers: 0, ...overrides };
 }
 
 class SpyTracker implements Tracker {
