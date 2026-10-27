@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 import type { Platform } from "./platforms.js";
-import { checkRepo, configValue, onRef } from "./preflight.js";
+import { checkRepo, fromGitConfig, onRef } from "./preflight.js";
 
 describe("checkRepo", () => {
   test("lists two missing things in one message, each with its fix", async () => {
@@ -60,7 +60,7 @@ describe("checkRepo", () => {
     });
   });
 
-  test("requires the git user.name and user.email of the Host repo", async () => {
+  test("requires the Host's git user.name and user.email", async () => {
     const sut = makeSUT({ gitConfig: {}, missingLabels: ["ready-for-human"] });
 
     await assert.rejects(sut.check(), (error: Error) => {
@@ -99,13 +99,28 @@ describe("onRef", () => {
   });
 });
 
-describe("configValue", () => {
+describe("fromGitConfig", () => {
   test("gives a set key's value, and an empty string for an unset key", async () => {
     const git = gitRepo();
     git("config", "afk.owner", "Ada");
 
-    assert.equal(await configValue(git)("afk.owner"), "Ada");
-    assert.equal(await configValue(git)("afk.unset"), "");
+    assert.equal(await fromGitConfig(git)("afk.owner"), "Ada");
+    assert.equal(await fromGitConfig(git)("afk.unset"), "");
+  });
+
+  test("falls back to the global config", async () => {
+    const git = gitRepo();
+    git("config", "--global", "afk.owner", "Ada");
+
+    assert.equal(await fromGitConfig(git)("afk.owner"), "Ada");
+  });
+
+  test("throws when git fails for another reason than an unset key", async () => {
+    const brokenGit = () => {
+      throw Object.assign(new Error("not a git repository"), { status: 128 });
+    };
+
+    await assert.rejects(fromGitConfig(brokenGit)("user.name"), /not a git repository/);
   });
 });
 
@@ -113,7 +128,8 @@ describe("configValue", () => {
 
 function gitRepo() {
   const dir = mkdtempSync(join(tmpdir(), "preflight-"));
-  const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { cwd: dir, encoding: "utf8" });
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: join(dir, "global.gitconfig") };
+  const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { cwd: dir, encoding: "utf8", env });
   git("init", "--quiet");
   return Object.assign(git, { dir });
 }
@@ -130,18 +146,26 @@ function platform(name: string, overrides: Partial<Platform> = {}): Platform {
   };
 }
 
+interface SUTOptions {
+  platforms?: Platform[];
+  missingFiles?: string[];
+  missingLabels?: string[];
+  labels?: string[];
+  gitConfig?: Record<string, string>;
+}
+
 function makeSUT({
   platforms = [platform("web"), platform("server")],
   missingFiles = [],
   missingLabels = [],
   labels = ["bug", "ready-for-agent", "ready-for-human"],
   gitConfig = { "user.name": "Ada", "user.email": "ada@example.com" },
-}: { platforms?: Platform[]; missingFiles?: string[]; missingLabels?: string[]; labels?: string[]; gitConfig?: Record<string, string> } = {}) {
+}: SUTOptions = {}) {
   const project = { repo: "acme/shop", baseBranch: "trunk", platforms };
   const repo = {
     isOnBase: async (path: string) => !missingFiles.includes(path),
     labels: async () => labels.filter((label) => !missingLabels.includes(label)),
-    gitConfig: async (key: string) => gitConfig[key] ?? "",
+    gitConfigValue: async (key: string) => gitConfig[key] ?? "",
   };
   return { check: () => checkRepo(project, repo) };
 }

@@ -87,7 +87,7 @@ Before `run` and `smoke` open any Sandbox, the Preflight checks these and stops 
 
 - On `origin/<baseBranch>`: `GLOSSARY.md` at the root, `docs/agents/git-conventions.md`, and each platform's `standards` file. `GLOSSARY-MAP.md` is optional.
 - On GitHub: the labels `ready-for-agent` and `ready-for-human`.
-- In the Host repo: git `user.name` and `user.email`, from its config or the global one. The agents' commits carry them.
+- On the Host: git `user.name` and `user.email`, from the repo's config or the global one. The agents' commits carry them.
 
 Unchecked: the loop imposes its branch `issue/<n>-<slug>`, commit and PR title `[#n] - Summary`, and `Closes #n.`; the repo's `git-conventions.md` must agree.
 

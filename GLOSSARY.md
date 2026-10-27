@@ -65,7 +65,7 @@ The checks the loop executes in the issue's Sandbox, judged by exit code: the st
 _Avoid_: Host test run, CI, build
 
 **Preflight**:
-The check at the start of `run` and `smoke`, beside the env and Tart checks, of what the loop requires of the repo: files on `origin/<baseBranch>` and labels on GitHub. It stops with one list of everything missing, before any Sandbox opens or Attempt is spent.
+The check at the start of `run` and `smoke`, beside the env and Tart checks, of what the loop requires of the repo: files on `origin/<baseBranch>`, labels on GitHub, and the Host's git user.name and user.email. It stops with one list of everything missing, before any Sandbox opens or Attempt is spent.
 
 **Attempt**:
 One agent run followed by its Test run.
