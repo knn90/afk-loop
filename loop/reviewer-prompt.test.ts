@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { FixRound, Issue, OpenFinding } from "./afk-loop.js";
+import type { Project } from "./loop-config.js";
 import type { Platform } from "./platforms.js";
 import { answeredOpenFindings, firstReview, fixableFindings, openFindings, pullRequestDraft, reviewerPrompt, wrapUpPrompt } from "./reviewer-prompt.js";
 
@@ -359,6 +360,41 @@ describe("wrapUpPrompt", () => {
   });
 });
 
+describe("reviewerPrompt, Verify skill", () => {
+  const skillFinding =
+    "`This PR edits the Verify skill: <path>. The Behavior check used the base branch's copy, so this edit was not checked. Keep it, or move it to a maintain-verification-skill run.`";
+  const driverFinding =
+    "`This PR edits the Verify skill's Driver: <path>. The Behavior check used the base branch's copy, so this edit was not checked. Keep it, or move it to a maintain-verification-skill run.`";
+
+  test("raises an Open finding with its path for each edited Verify skill or Driver file, finding the Driver through SKILL.md", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.prompt(verifiedProject);
+
+    assert.ok(
+      prompt.includes(
+        `- The Verify skill is \`.claude/skills/verify-web/\`, and its Driver is the files its \`SKILL.md\` runs to drive the app. For each file of the Verify skill the diff edits, raise an Open finding with its \`path\`: ${skillFinding} For each Driver file the diff edits, the same for the Driver: ${driverFinding}\n`,
+      ),
+    );
+  });
+
+  test("the Wrap-up raises the same Open findings", () => {
+    const sut = makeSUT();
+
+    const prompt = sut.wrapUp(undefined, undefined, verifiedProject);
+
+    assert.ok(prompt.includes(`raise an Open finding with its \`path\`: ${skillFinding}`));
+    assert.ok(prompt.includes(driverFinding));
+  });
+
+  test("names no Verify skill when no Platform has one", () => {
+    const sut = makeSUT();
+
+    assert.ok(!sut.prompt().includes("Verify skill"));
+    assert.ok(!sut.wrapUp().includes("Verify skill"));
+  });
+});
+
 describe("fixableFindings", () => {
   test("a reply with Fixable findings gives their text", () => {
     const sut = makeSUT();
@@ -530,6 +566,8 @@ function platform(name: string): Platform {
 
 const project = { repo: "acme/Habitat", platforms: [platform("web"), platform("server")], image: { tools: "Node and Go" } };
 
+const verifiedProject = { ...project, platforms: [{ ...platform("web"), verifySkill: "verify-web" }, platform("server")] };
+
 const runOneOpenFindings: OpenFinding[] = [
   { text: "The streak resets at UTC midnight.", at: { path: "web/src/streak.ts", line: 12 } },
   { text: "No test covers a skipped day." },
@@ -543,10 +581,10 @@ function makeSUT(standards = ["Prefer value types."], comments: string[] = []) {
     answeredOpenFindings,
     firstReview,
     pullRequestDraft,
-    prompt: () => reviewerPrompt({ project, issue, branch: "issue/7-fix-streak", base: "abc123", standards }),
-    wrapUp: (open: OpenFinding[] = runOneOpenFindings, ending: Pick<FixRound, "findingsLeft" | "failed"> = {}) =>
+    prompt: (forProject: Project = project) => reviewerPrompt({ project: forProject, issue, branch: "issue/7-fix-streak", base: "abc123", standards }),
+    wrapUp: (open: OpenFinding[] = runOneOpenFindings, ending: Pick<FixRound, "findingsLeft" | "failed"> = {}, forProject: Project = project) =>
       wrapUpPrompt({
-        project,
+        project: forProject,
         issue,
         branch: "issue/7-fix-streak",
         base: "abc123",

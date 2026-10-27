@@ -50,6 +50,21 @@ describe("checkRepo", () => {
       return true;
     });
   });
+
+  test("requires the SKILL.md of each platform's Verify skill", async () => {
+    const sut = makeSUT({ platforms: [platform("web", { verifySkill: "verify-web" }), platform("server")], missingFiles: [".claude/skills/verify-web/SKILL.md"] });
+
+    await assert.rejects(sut.check(), (error: Error) => {
+      assert.deepEqual(error.message.split("\n").slice(1, -1), ["- .claude/skills/verify-web/SKILL.md missing on origin/trunk: add it and push it to trunk"]);
+      return true;
+    });
+  });
+
+  test("a platform without a Verify skill requires no SKILL.md", async () => {
+    const sut = makeSUT({ missingFiles: [".claude/skills/verify-web/SKILL.md"] });
+
+    await sut.check();
+  });
 });
 
 describe("onRef", () => {
@@ -80,7 +95,7 @@ function gitRepo() {
   return Object.assign(git, { dir });
 }
 
-function platform(name: string): Platform {
+function platform(name: string, overrides: Partial<Platform> = {}): Platform {
   return {
     name,
     folder: name,
@@ -88,11 +103,17 @@ function platform(name: string): Platform {
     agentBuildHint: `run \`make ${name}\``,
     verified: `the ${name} tests`,
     steps: async () => [],
+    ...overrides,
   };
 }
 
-function makeSUT({ missingFiles = [], missingLabels = [], labels = ["bug", "ready-for-agent", "ready-for-human"] }: { missingFiles?: string[]; missingLabels?: string[]; labels?: string[] } = {}) {
-  const project = { repo: "acme/shop", baseBranch: "trunk", platforms: [platform("web"), platform("server")] };
+function makeSUT({
+  platforms = [platform("web"), platform("server")],
+  missingFiles = [],
+  missingLabels = [],
+  labels = ["bug", "ready-for-agent", "ready-for-human"],
+}: { platforms?: Platform[]; missingFiles?: string[]; missingLabels?: string[]; labels?: string[] } = {}) {
+  const project = { repo: "acme/shop", baseBranch: "trunk", platforms };
   const repo = {
     isOnBase: async (path: string) => !missingFiles.includes(path),
     labels: async () => labels.filter((label) => !missingLabels.includes(label)),

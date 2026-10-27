@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
 import { leftoverVms, type Loop } from "./loop-config.js";
+import { verifySkills, type Platform } from "./platforms.js";
 import { deleteVm, tartBin, vmNames } from "./tart.js";
 
 const configFolder = ".sandcastle";
@@ -57,6 +58,17 @@ export function loadHostEnv({ configDir }: Host) {
 export function checkTart(loop: Loop) {
   check(succeeds(tartBin, ["--version"]), "Tart isn't installed (see afk-loop's README.md)");
   check(vmNames().includes(loop.vms.base), `base VM ${loop.vms.base} missing (npx --prefix ${configFolder} afk-loop build-image)`);
+  checkGh(loop.platforms, () => gh("--version"));
+}
+
+const minimumGh = [2, 99];
+
+export function checkGh(platforms: readonly Platform[], ghVersion: () => string) {
+  if (verifySkills(platforms).length === 0) return;
+  const version = ghVersion().match(/gh version ((\d+)\.(\d+)\S*)/);
+  const [major, minor] = [Number(version?.[2]), Number(version?.[3])];
+  const recent = major > minimumGh[0] || (major === minimumGh[0] && minor >= minimumGh[1]);
+  check(recent, `gh ${version?.[1] ?? "of unknown version"} is older than ${minimumGh.join(".")}, which \`gh pr create --attach\` needs to attach Behavior evidence: brew upgrade gh`);
 }
 
 export function deleteLeftoverVms(loop: Loop) {
@@ -81,6 +93,10 @@ export function lines(output: string): string[] {
 
 export function gh(...args: string[]): string {
   return execFileSync("gh", args, { encoding: "utf8" });
+}
+
+export function ghAt(cwd: string, ...args: string[]): string {
+  return execFileSync("gh", args, { encoding: "utf8", cwd });
 }
 
 export function ghWithInput(input: string, ...args: string[]): string {

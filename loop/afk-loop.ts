@@ -10,8 +10,9 @@ import {
   readyForHuman,
   unchangedHeadFeedback,
 } from "./loop-rules.js";
+import { attachList, behaviorSection, hostReads, inconclusive, noBehaviorCheck, type BehaviorCheck, type EvidenceFile } from "./behavior-check.js";
 import { linkedIssueNumbers } from "./linked-issues.js";
-import { testChangedPlatforms, verifiedLine, type Platform } from "./platforms.js";
+import { testChangedPlatforms, verifiedLine, verifySkills, type Platform } from "./platforms.js";
 
 export interface Issue {
   readonly number: number;
@@ -40,6 +41,12 @@ export interface PullRequest {
   readonly branch: string;
   readonly title: string;
   readonly body: string;
+  readonly attachments?: Attachments;
+}
+
+export interface Attachments {
+  readonly files: readonly string[];
+  unattached(ghError: string): string;
 }
 
 export interface OpenFinding {
@@ -97,7 +104,17 @@ export interface IssueSession extends Session {
   implement(feedback?: string, fixableFindings?: string): Promise<ImplementerRun>;
   review(): Promise<FirstReview>;
   wrapUp(fixRound: FixRound): Promise<WrapUp>;
+  verify(verifySkill: string, head: string): Promise<VerifierRun>;
   putBack(head: string): Promise<void>;
+}
+
+export interface VerifierRun {
+  readonly log: string;
+  readonly evidence: string;
+  readonly manifest?: string;
+  readonly files: readonly EvidenceFile[];
+  readonly head: string;
+  readonly dirty: boolean;
 }
 
 export interface ImplementerRun {
@@ -143,7 +160,7 @@ export interface TestRunner {
   rawLogPath(branch: string): string;
 }
 
-export type HandoffOutcome = {
+export type SessionHandoff = {
   readonly issue: number;
   readonly kind: "handoff";
   readonly branch: string;
@@ -152,6 +169,15 @@ export type HandoffOutcome = {
   | { readonly reason: "no-commits"; readonly lastReply: string; readonly implementerLog: string }
   | { readonly reason: "contradiction"; readonly contradiction: string; readonly implementerLog: string }
 );
+
+export interface NoAcceptanceCriteria {
+  readonly issue: number;
+  readonly kind: "handoff";
+  readonly reason: "no-acceptance-criteria";
+  readonly missing: "section" | "items";
+}
+
+export type HandoffOutcome = SessionHandoff | NoAcceptanceCriteria;
 
 export interface ReviewedOutcome {
   readonly issue: number;
@@ -162,6 +188,7 @@ export interface ReviewedOutcome {
   readonly openFindings: readonly OpenFinding[];
   readonly pullRequestDraft?: string;
   readonly fixRoundFailed?: true;
+  readonly behaviorCheck?: BehaviorCheck;
 }
 
 export type Outcome =
@@ -186,6 +213,8 @@ const fixesNotIncluded = "The Fix round failed its Test run, so its fixes are no
 const noneFixed = "The Fix round failed, so none of these Fixable findings is fixed:";
 const unreadableReview = "The Reviewer's reply gives no <fixable-findings> block and <open-findings> block the Host can read, so its findings are unknown.";
 const unchecked = "The Wrap-up gave no Open findings the Host can read, so whether these Fixable findings are fixed is unchecked:";
+const acceptanceCriteriaTitle = "Acceptance criteria";
+const acceptanceCriteria = `## ${acceptanceCriteriaTitle}`;
 const reviewerSays = `${loopMarker}\n**The AFK loop's Reviewer:**`;
 
 export function issueBranchPrefix(issueNumber: number): string {
@@ -233,6 +262,8 @@ async function work(issue: Issue, loop: AfkLoopOptions): Promise<Outcome> {
   const localBranches = await loop.agents.localBranches(issue.number);
   const kept = localBranches.find((branch) => !branch.leftover);
   if (kept) return { issue: issue.number, kind: "local-branch", branch: kept.name };
+  const missing = missingAcceptanceCriteria(issue);
+  if (missing) return handOff(issue, { issue: issue.number, kind: "handoff", reason: "no-acceptance-criteria", missing }, loop.tracker);
   for (const leftover of localBranches) await loop.agents.discardLeftover(leftover.name);
 
   const outcome = await runSession(issue, loop);
@@ -241,6 +272,17 @@ async function work(issue: Issue, loop: AfkLoopOptions): Promise<Outcome> {
   const pullRequest = await openPullRequest(issue, outcome, loop);
   await postOpenFindings(pullRequest, outcome.openFindings, loop.tracker);
   return outcome;
+}
+
+function missingAcceptanceCriteria({ body }: Issue): NoAcceptanceCriteria["missing"] | undefined {
+  const lines = body.split(/\r?\n/);
+  const heading = new RegExp(`^##\\s+${acceptanceCriteriaTitle}\\s*$`, "i");
+  const start = lines.findIndex((line) => heading.test(line.trim()));
+  if (start === -1) return "section";
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((line) => /^#{1,2}\s/.test(line));
+  const section = end === -1 ? rest : rest.slice(0, end);
+  return section.some((line) => /^\s*(?:[-*+]|\d+[.)])\s+(?!\[[ xX]\]\s*$)\S/.test(line)) ? undefined : "items";
 }
 
 async function runSession(issue: Issue, loop: AfkLoopOptions): Promise<Outcome> {
@@ -271,19 +313,23 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
     reviewLogs.push(review.log);
     return review;
   };
-  const pullRequest = ({ openFindings, pullRequestDraft }: Review, platforms: readonly Platform[], fixRoundFailed?: true): Outcome => ({
-    issue: issue.number,
-    kind: "pull-request",
-    branch,
-    reviewLogs,
-    platforms,
-    openFindings,
-    ...(pullRequestDraft ? { pullRequestDraft } : {}),
-    ...(fixRoundFailed ? { fixRoundFailed } : {}),
-  });
+  const pullRequest = async ({ openFindings, pullRequestDraft }: Review, head: string, platforms: readonly Platform[], fixRoundFailed?: true): Promise<Outcome> => {
+    const behaviorCheck = await checkBehavior(session, head, platforms);
+    return {
+      issue: issue.number,
+      kind: "pull-request",
+      branch,
+      reviewLogs,
+      platforms,
+      openFindings,
+      ...(pullRequestDraft ? { pullRequestDraft } : {}),
+      ...(fixRoundFailed ? { fixRoundFailed } : {}),
+      ...(behaviorCheck ? { behaviorCheck } : {}),
+    };
+  };
   const wrapUp = async (round: FixRound, head: string, platforms: readonly Platform[]): Promise<Outcome> => {
     const review = await reviewerRun(session.wrapUp(round), head);
-    return pullRequest({ ...review, openFindings: finalOpenFindings(round, review.openFindings) }, platforms, round.failed);
+    return pullRequest({ ...review, openFindings: finalOpenFindings(round, review.openFindings) }, head, platforms, round.failed);
   };
   while (failures < attemptBudget) {
     const run = await session.implement(feedback, fixRound?.fixableFindings);
@@ -315,7 +361,7 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
     if (fixRound) return wrapUp(fixRound, worktree.head, worktree.platforms);
     const review = await reviewerRun(session.review(), worktree.head);
     if (review.unreadable) throw new Error(`${unreadableReview} Its log: ${review.log}`);
-    if (!review.fixableFindings) return pullRequest(review, worktree.platforms);
+    if (!review.fixableFindings) return pullRequest(review, worktree.head, worktree.platforms);
     fixRound = { fixableFindings: review.fixableFindings, openFindings: review.openFindings, reviewedHead: worktree.head };
     reviewedPlatforms = worktree.platforms;
     lastFailure = undefined;
@@ -336,6 +382,25 @@ async function spendAttempts(issue: Issue, branch: string, session: IssueSession
   };
 }
 
+async function checkBehavior(session: IssueSession, head: string, platforms: readonly Platform[]): Promise<BehaviorCheck | undefined> {
+  const [verifySkill] = verifySkills(platforms);
+  if (!verifySkill) return undefined;
+  try {
+    const run = await session.verify(verifySkill, head);
+    const changed = run.dirty || run.head !== head;
+    if (changed) await session.putBack(head);
+    const reading = changed ? inconclusive("the Verifier changed the branch") : hostReads(run.manifest, head, run.files);
+    return { ...reading, head, verifySkill, log: run.log, evidence: run.evidence };
+  } catch (error) {
+    return { ...inconclusive(`the Behavior check failed in the Sandbox: ${error instanceof Error ? error.message : String(error)}`), head, verifySkill };
+  }
+}
+
+function behaviorLines(platforms: readonly Platform[], check?: BehaviorCheck, uploadError?: string): string[] {
+  if (check) return [behaviorSection(check, uploadError)];
+  return verifySkills(platforms).length > 0 ? [noBehaviorCheck] : [];
+}
+
 function finalOpenFindings({ fixableFindings, openFindings, failed }: FixRound, wrapUp?: readonly OpenFinding[]): readonly OpenFinding[] {
   if (!failed) return wrapUp ?? [...openFindings, { text: `${unchecked}\n\n${fixableFindings}` }];
   if (wrapUp && wrapUp.length > openFindings.length) return wrapUp;
@@ -346,19 +411,24 @@ function withoutClosingKeywords(draft: string): string {
   return draft.replace(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(:?\s+(?:[\w.-]+\/[\w.-]+)?#\d+)/gi, "Refs$1");
 }
 
-async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, openFindings, pullRequestDraft, fixRoundFailed }: ReviewedOutcome, loop: AfkLoopOptions): Promise<string> {
+async function openPullRequest(issue: Issue, { branch, reviewLogs, platforms, openFindings, pullRequestDraft, fixRoundFailed, behaviorCheck }: ReviewedOutcome, loop: AfkLoopOptions): Promise<string> {
   await loop.tracker.pushBranch(branch);
-  const pullRequest = await loop.tracker.openPullRequest({
-    branch,
-    title: `[#${issue.number}] - ${summary(issue)}`,
-    body: [
+  const body = (uploadError?: string) =>
+    [
       `Closes #${issue.number}.`,
       ...(pullRequestDraft ? [withoutClosingKeywords(pullRequestDraft)] : []),
       implementedBy,
       `${reviewedBy} Its logs on the Host: ${reviewLogs.map((log) => `\`${log}\``).join(", ")}. ${openFindingsPosted(openFindings.length)}`,
       ...(fixRoundFailed ? [fixesNotIncluded] : []),
       verifiedLine(loop.platforms, platforms),
-    ].join("\n\n"),
+      ...behaviorLines(loop.platforms, behaviorCheck, uploadError),
+    ].join("\n\n");
+  const files = behaviorCheck ? attachList(behaviorCheck).map((file) => `${behaviorCheck.evidence}${file}`) : [];
+  const pullRequest = await loop.tracker.openPullRequest({
+    branch,
+    title: `[#${issue.number}] - ${summary(issue)}`,
+    body: body(),
+    ...(files.length ? { attachments: { files, unattached: body } } : {}),
   });
   await loop.tracker.relabel(issue.number, { remove: readyForAgent });
   return pullRequest;
@@ -391,21 +461,25 @@ function bullet({ at, text }: OpenFinding): string {
 
 async function handOff(issue: Issue, handoff: HandoffOutcome, tracker: Tracker): Promise<HandoffOutcome> {
   await tracker.relabel(issue.number, { remove: readyForAgent, add: readyForHuman });
-  const { branch } = handoff;
   const { why, details, settle = "" } = describeHandoff(handoff);
-  await tracker.comment(
-    issue.number,
-    [
-      `${loopMarker}\n${handedOff} ${why}.`,
-      details,
-      `Nothing is pushed. What the session left, if anything, is on the Host: on the local branch \`${branch}\`, or uncommitted in its worktree.`,
-      `To requeue for the loop: ${settle}remove the local \`${branch}\` branch and its worktree, if they are still there, then relabel the issue \`${readyForAgent}\`.`,
-    ].join("\n\n"),
-  );
+  const requeue =
+    handoff.reason === "no-acceptance-criteria"
+      ? [`To requeue for the loop: add a \`${acceptanceCriteria}\` section with at least one item to this issue, then relabel the issue \`${readyForAgent}\`.`]
+      : [
+          `Nothing is pushed. What the session left, if anything, is on the Host: on the local branch \`${handoff.branch}\`, or uncommitted in its worktree.`,
+          `To requeue for the loop: ${settle}remove the local \`${handoff.branch}\` branch and its worktree, if they are still there, then relabel the issue \`${readyForAgent}\`.`,
+        ];
+  await tracker.comment(issue.number, [`${loopMarker}\n${handedOff} ${why}.`, details, ...requeue].join("\n\n"));
   return handoff;
 }
 
 export function describeHandoff(handoff: HandoffOutcome): { why: string; details: string; settle?: string } {
+  if (handoff.reason === "no-acceptance-criteria") {
+    return {
+      why: handoff.missing === "section" ? `the issue has no \`${acceptanceCriteria}\` section` : `the issue's \`${acceptanceCriteria}\` section has no items`,
+      details: `The loop works an issue only when its \`${acceptanceCriteria}\` section has at least one item. No Sandbox was opened and no Attempt was spent.`,
+    };
+  }
   if (handoff.reason === "contradiction") {
     return {
       why: "the Implementer found a Contradiction in the issue",

@@ -16,6 +16,7 @@ export interface Platform {
   readonly agentBuildHint: string;
   readonly verified: string;
   readonly presentWhen?: string;
+  readonly verifySkill?: string;
   steps(sandbox: SandboxExec): Promise<Step[]>;
   afterFailure?(sandbox: SandboxExec, exitCode: number): Promise<void>;
 }
@@ -24,6 +25,18 @@ export type IsOnBranch = (path: string) => Promise<boolean>;
 
 export function folder(platform: Platform): string {
   return `${platform.folder}/`;
+}
+
+export function verifySkills(platforms: readonly Platform[]): string[] {
+  return platforms.flatMap((platform) => (platform.verifySkill ? [platform.verifySkill] : []));
+}
+
+export function verifySkillFolder(skill: string): string {
+  return `.claude/skills/${skill}/`;
+}
+
+export function verifySkillFile(skill: string): string {
+  return `${verifySkillFolder(skill)}SKILL.md`;
 }
 
 export function changesNoPlatform(platforms: readonly Platform[]): string {

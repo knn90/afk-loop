@@ -16,7 +16,9 @@ import {
   type SandboxExec,
   type TestRunner,
   type Tracker,
+  type VerifierRun,
 } from "./afk-loop.js";
+import type { Claim, Manifest } from "./behavior-check.js";
 import { dirtyFeedback } from "./loop-rules.js";
 import type { Platform } from "./platforms.js";
 
@@ -66,7 +68,7 @@ describe("runAfkLoop", () => {
 
   test("an issue naming another issue is started with that issue's text", async () => {
     const verified = { number: 224, title: "Verify the stack", body: "Catalog", comments: [] };
-    const { sut, agents } = makeSUT({ issues: [issue(1, { body: "Start from #224.\n\n## Blocked by\n\n- #229" })], linkedIssues: [verified, { ...verified, number: 229 }] });
+    const { sut, agents } = makeSUT({ issues: [issue(1, { body: `Start from #224.\n\n## Blocked by\n\n- #229\n\n${criteria}` })], linkedIssues: [verified, { ...verified, number: 229 }] });
 
     await sut.run();
 
@@ -83,7 +85,7 @@ describe("runAfkLoop", () => {
 
   test("an issue named in a comment is a Linked issue, except under the comment's Parent and Blocked by headings", async () => {
     const { sut, agents } = makeSUT({
-      issues: [issue(1, { body: "## Blocked by\n\n- #229" })],
+      issues: [issue(1, { body: `## Blocked by\n\n- #229\n\n${criteria}` })],
       comments: { 1: ["## Parent\n\n#226", "Not the receiver of #250; #229 has the stream."] },
       linkedIssues: [226, 229, 250].map(linked),
     });
@@ -95,7 +97,7 @@ describe("runAfkLoop", () => {
 
   test("the body and the comments share one limit of Linked issues, the body's first", async () => {
     const { sut, agents } = makeSUT({
-      issues: [issue(1, { body: "#11 #12 #13" })],
+      issues: [issue(1, { body: `#11 #12 #13\n\n${criteria}` })],
       comments: { 1: ["#14 #15", "#16"] },
       linkedIssues: [16, 15, 14, 13, 12, 11].map(linked),
     });
@@ -941,6 +943,249 @@ describe("runAfkLoop, routing", () => {
   });
 });
 
+describe("runAfkLoop, Acceptance criteria", () => {
+  test("an issue with no Acceptance criteria section is a Handoff naming the section, with no Sandbox and no Attempt, and the loop moves on", async () => {
+    const { sut, agents, tracker, calls } = makeSUT({ issues: [issue(1, { body: "Count the streak.\n\n## Blocked by\n\nNone" }), issue(2)] });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes[0], { issue: 1, kind: "handoff", reason: "no-acceptance-criteria", missing: "section" });
+    assert.deepEqual(calls.slice(0, 2), ["relabel #1: -ready-for-agent +ready-for-human", "comment on #1"]);
+    assert.deepEqual(tracker.comments, [
+      [
+        "<!-- afk-loop -->\nHanded off to a human: the issue has no `## Acceptance criteria` section.",
+        "The loop works an issue only when its `## Acceptance criteria` section has at least one item. No Sandbox was opened and no Attempt was spent.",
+        "To requeue for the loop: add a `## Acceptance criteria` section with at least one item to this issue, then relabel the issue `ready-for-agent`.",
+      ].join("\n\n"),
+    ]);
+    assert.deepEqual(agents.startedIssues, [2]);
+  });
+
+  test("an issue whose Acceptance criteria section has no items is the same Handoff, naming the empty section", async () => {
+    const { sut, agents, tracker } = makeSUT({ issues: [issue(1, { body: "## Acceptance criteria\n\n- [ ]\n\nTBD\n\n## Blocked by\n\n- #2" })] });
+
+    const outcomes = await sut.run();
+
+    assert.deepEqual(outcomes, [{ issue: 1, kind: "handoff", reason: "no-acceptance-criteria", missing: "items" }]);
+    assert.match(tracker.comments[0] ?? "", /^<!-- afk-loop -->\nHanded off to a human: the issue's `## Acceptance criteria` section has no items\.\n\n/);
+    assert.deepEqual(agents.startedIssues, []);
+  });
+
+  test("an issue with one Acceptance criteria item, under any heading level after it, is worked", async () => {
+    const { sut, agents } = makeSUT({ issues: [issue(1, { body: "## Acceptance criteria\n\n### Streak\n\n1. The streak counts the day\n\n## Notes" })] });
+
+    await sut.run();
+
+    assert.deepEqual(agents.startedIssues, [1]);
+  });
+});
+
+describe("runAfkLoop, Behavior check", () => {
+  const check = (fixture: Partial<Fixture> = {}) => makeSUT({ issues: [issue(1)], platforms: [web, ios], runs: { 1: [{ platforms: [ios] }] }, ...fixture });
+  const prBody = (tracker: SpyTracker) => tracker.pullRequests[0]?.body ?? "";
+  const by = "by the AFK loop's Verifier in the Sandbox with `verify-ios`. Its log on the Host: `logs/issue-1-verifier-1`. Its Behavior evidence on the Host: `.sandcastle/evidence/1-head-1/`.";
+
+  test("the Verifier runs once after the Reviewer's last run, at the final head, and the PR shows its PASS under the Verified line", async () => {
+    const { sut, tracker, calls } = check();
+
+    await sut.run();
+
+    assert.deepEqual(calls.slice(0, 8), ["start issue/1-issue-1", "implement", "inspect", "test run issue/1-issue-1", "review", "put back head-1", "verify verify-ios at head-1", "close issue/1-issue-1"]);
+    assert.ok(
+      prBody(tracker).endsWith(
+        [
+          "Verified: the Test run passed on the reviewed commit (the ios tests).",
+          `Behavior check: PASS on \`head-1\`, ${by}`,
+          "- **Met**: The streak counts the day\n  The streak read 1 day.\n  ![streak.png](.sandcastle/evidence/1-head-1/streak.png)",
+        ].join("\n\n"),
+      ),
+    );
+    assert.deepEqual(tracker.pullRequests[0]?.attached, [".sandcastle/evidence/1-head-1/streak.png"]);
+  });
+
+  test("after a Fix round the Verifier runs once, after the wrap-up, at the head it reviewed", async () => {
+    const { sut, calls } = check({ runs: { 1: [{ platforms: [ios] }, { fixableFindings: "Rename it." }, { platforms: [ios] }, { commits: 0 }] } });
+
+    await sut.run();
+
+    assert.deepEqual(calls.filter((call) => /^(implement|review|wrap up|verify)/.test(call)), ["implement", "review", "implement", "wrap up", "verify verify-ios at head-3"]);
+  });
+
+  test("a FAIL shows each claim line, the Not checked list and the video, starts no Fix round and spends no Attempt", async () => {
+    const failing = manifest("head-1", {
+      outcome: "FAIL",
+      reason: "The streak stays at 0 days.",
+      claims: [
+        { ...metClaim, result: "not met", observed: "The streak read 0 days." },
+        { kind: "regression", criterion: "Today: check off Meditate", result: "met", observed: "All 1 marked.", screenshots: ["check-off.png", "streak.png"], feature: "today.md" },
+        { kind: "criterion", criterion: "The streak shows a flame", result: "met", observed: "A flame by the count.", screenshots: ["flame.png"], feature: null },
+      ],
+      skipped: [
+        { kind: "criterion", criterion: "StreakStore has unit tests.", why: "not observable in the app" },
+        { kind: "regression", criterion: "Today: the streak starts at 1", why: "changed by this issue: feature file out of date", feature: "today.md" },
+      ],
+      video: "drive.mp4",
+    });
+    const files = ["streak.png", "check-off.png", "flame.png", "drive.mp4"].map((name) => ({ name, bytes: 1 }));
+    const { sut, tracker, calls } = check({ verifier: () => ({ manifest: failing, files }) });
+
+    const outcomes = await sut.run();
+
+    assert.equal(outcomes[0]?.kind, "pull-request");
+    assert.deepEqual(calls.filter((call) => /^(implement|review|wrap up|verify|test run)/.test(call)), ["implement", "test run issue/1-issue-1", "review", "verify verify-ios at head-1"]);
+    assert.ok(
+      prBody(tracker).endsWith(
+        [
+          `Behavior check: FAIL on \`head-1\`: The streak stays at 0 days, ${by}`,
+          [
+            "- **Not met**: The streak counts the day\n  The streak read 0 days.\n  ![streak.png](.sandcastle/evidence/1-head-1/streak.png)",
+            "- **Met**, regression (`today.md`): Today: check off Meditate\n  All 1 marked.\n  ![check-off.png](.sandcastle/evidence/1-head-1/check-off.png)\n  ![streak.png](.sandcastle/evidence/1-head-1/streak.png)",
+            "- **Met**, no feature file, driven with the Drive commands: The streak shows a flame\n  A flame by the count.\n  ![flame.png](.sandcastle/evidence/1-head-1/flame.png)",
+          ].join("\n"),
+          "Not checked:\n- StreakStore has unit tests: not observable in the app.\n- Today: the streak starts at 1 (`today.md`): changed by this issue: feature file out of date.",
+          "Video of the drive: ![drive.mp4](.sandcastle/evidence/1-head-1/drive.mp4)",
+        ].join("\n\n"),
+      ),
+    );
+    assert.deepEqual(
+      tracker.pullRequests[0]?.attached,
+      ["streak.png", "check-off.png", "flame.png", "drive.mp4"].map((file) => `.sandcastle/evidence/1-head-1/${file}`),
+    );
+  });
+
+  test("an INCONCLUSIVE gives the Verifier's reason and asks for a check by hand", async () => {
+    const unchecked = manifest("head-1", { outcome: "INCONCLUSIVE", reason: "Doctor: app_running false after Launch.", claims: [], skipped: [] });
+    const { sut, tracker } = check({ verifier: () => ({ manifest: unchecked, files: [] }) });
+
+    await sut.run();
+
+    assert.ok(prBody(tracker).endsWith(`Behavior check: INCONCLUSIVE on \`head-1\`: Doctor: app_running false after Launch. Check the app by hand before merging, ${by}`));
+  });
+
+  for (const [what, verifier, reason] of [
+    ["a missing manifest", () => ({ manifest: undefined }), "no Evidence manifest"],
+    ["an unreadable manifest", () => ({ manifest: "{ not json" }), "Evidence manifest unreadable"],
+    ["a manifest of the wrong shape", () => ({ manifest: JSON.stringify({ outcome: "PASS", head: "head-1" }) }), "Evidence manifest unreadable"],
+    ["a manifest for another head", () => ({ manifest: manifest("0ab12cdef") }), "Evidence manifest is for 0ab12cd, not head-1"],
+    ["a listed file that is missing", () => ({ files: [] }), "listed file streak.png not in /Users/admin/afk-evidence"],
+    ["a listed file with a / in its name", () => ({ manifest: manifest("head-1", { claims: [{ ...metClaim, screenshots: ["shots/streak.png"] }] }), files: [{ name: "shots/streak.png", bytes: 1 }] }), "listed file shots/streak.png not in /Users/admin/afk-evidence"],
+    ["a listed screenshot that is not a .png", () => ({ manifest: manifest("head-1", { claims: [{ ...metClaim, screenshots: ["streak.jpg"] }] }), files: [{ name: "streak.jpg", bytes: 1 }] }), "listed screenshot streak.jpg is not a .png"],
+    ["a listed video that is not an .mp4", () => ({ manifest: manifest("head-1", { video: "drive.mov" }), files: [{ name: "streak.png", bytes: 1 }, { name: "drive.mov", bytes: 1 }] }), "listed video drive.mov is not an .mp4"],
+  ] as const) {
+    test(`${what} gives INCONCLUSIVE with that reason, no claims and no attachment`, async () => {
+      const { sut, tracker } = check({ verifier });
+
+      await sut.run();
+
+      assert.ok(prBody(tracker).endsWith(`Behavior check: INCONCLUSIVE on \`head-1\`: ${reason}. Check the app by hand before merging, ${by}`));
+      assert.deepEqual(tracker.pullRequests[0]?.attached, []);
+    });
+  }
+
+  test("a manifest outcome that disagrees with its claims gives INCONCLUSIVE naming both, with the claims shown", async () => {
+    const { sut, tracker } = check({ verifier: (head) => ({ manifest: manifest(head, { claims: [{ ...metClaim, result: "unchecked", screenshots: [] }] }) }) });
+
+    await sut.run();
+
+    assert.ok(
+      prBody(tracker).endsWith(
+        [
+          `Behavior check: INCONCLUSIVE on \`head-1\`: Evidence manifest says PASS, its claims say INCONCLUSIVE. Check the app by hand before merging, ${by}`,
+          "- **Unchecked**: The streak counts the day\n  The streak read 1 day.",
+        ].join("\n\n"),
+      ),
+    );
+  });
+
+  test("a video over 10 MB is not attached, and the PR gives its size and Host path", async () => {
+    const files = [{ name: "streak.png", bytes: 2048 }, { name: "drive.mp4", bytes: 14_680_064 }];
+    const { sut, tracker } = check({ verifier: (head) => ({ manifest: manifest(head, { video: "drive.mp4" }), files }) });
+
+    await sut.run();
+
+    assert.ok(prBody(tracker).endsWith("\n\nVideo dropped: 14.0 MB, over the 10 MB cap. On the Host: .sandcastle/evidence/1-head-1/drive.mp4."));
+    assert.deepEqual(tracker.pullRequests[0]?.attached, [".sandcastle/evidence/1-head-1/streak.png"]);
+  });
+
+  test("a video of 10 MB is attached", async () => {
+    const files = [{ name: "streak.png", bytes: 2048 }, { name: "drive.mp4", bytes: 10_485_760 }];
+    const { sut, tracker } = check({ verifier: (head) => ({ manifest: manifest(head, { video: "drive.mp4" }), files }) });
+
+    await sut.run();
+
+    assert.ok(prBody(tracker).endsWith("\n\nVideo of the drive: ![drive.mp4](.sandcastle/evidence/1-head-1/drive.mp4)"));
+    assert.deepEqual(tracker.pullRequests[0]?.attached, [".sandcastle/evidence/1-head-1/streak.png", ".sandcastle/evidence/1-head-1/drive.mp4"]);
+  });
+
+  test("an upload that fails still opens the PR, with the gh error, the Host path, and file names in the claims", async () => {
+    const files = [{ name: "streak.png", bytes: 2048 }, { name: "drive.mp4", bytes: 2048 }];
+    const { sut, tracker } = check({ verifier: (head) => ({ manifest: manifest(head, { video: "drive.mp4" }), files }), attachFails: "HTTP 422: Unprocessable Entity" });
+
+    const outcomes = await sut.run();
+
+    assert.equal(outcomes[0]?.kind, "pull-request");
+    assert.ok(
+      prBody(tracker).endsWith(
+        [
+          `Behavior check: PASS on \`head-1\`, ${by}`,
+          "Behavior evidence could not be attached (HTTP 422: Unprocessable Entity). It is on the Host at .sandcastle/evidence/1-head-1/: attach it before merging.",
+          "- **Met**: The streak counts the day\n  The streak read 1 day.\n  `streak.png`",
+          "Video of the drive: `drive.mp4`",
+        ].join("\n\n"),
+      ),
+    );
+    assert.deepEqual(tracker.pullRequests[0]?.attached, []);
+  });
+
+  for (const [what, verifier] of [
+    ["a dirty tree", () => ({ dirty: true })],
+    ["a moved HEAD", () => ({ head: "head-9" })],
+  ] as const) {
+    test(`${what} after the Verifier puts the branch back at the final head, and the outcome is INCONCLUSIVE`, async () => {
+      const { sut, tracker, calls } = check({ verifier });
+
+      await sut.run();
+
+      assert.deepEqual(calls.slice(6, 9), ["verify verify-ios at head-1", "put back head-1", "close issue/1-issue-1"]);
+      assert.ok(prBody(tracker).endsWith(`Behavior check: INCONCLUSIVE on \`head-1\`: the Verifier changed the branch. Check the app by hand before merging, ${by}`));
+      assert.deepEqual(tracker.pullRequests[0]?.attached, []);
+    });
+  }
+
+  test("a Behavior check that fails in the Sandbox still opens the PR, INCONCLUSIVE with the error", async () => {
+    const { sut, tracker } = check({
+      verifier: () => {
+        throw new Error("scp failed: connection reset");
+      },
+    });
+
+    const outcomes = await sut.run();
+
+    assert.equal(outcomes[0]?.kind, "pull-request");
+    assert.ok(prBody(tracker).endsWith("Behavior check: INCONCLUSIVE on `head-1`: the Behavior check failed in the Sandbox: scp failed: connection reset. Check the app by hand before merging, by the AFK loop's Verifier in the Sandbox with `verify-ios`."));
+    assert.deepEqual(tracker.pullRequests[0]?.attached, []);
+  });
+
+  test("a branch that changes no Platform with a Verify skill gets no Verifier, and the PR says so", async () => {
+    const { sut, tracker, calls } = check({ runs: { 1: [{ platforms: [web] }] } });
+
+    const outcomes = await sut.run();
+
+    assert.ok(!calls.some((call) => call.startsWith("verify")));
+    assert.ok(outcomes[0]?.kind === "pull-request" && !outcomes[0].behaviorCheck);
+    assert.ok(prBody(tracker).endsWith("Verified: the Test run passed on the reviewed commit (the web tests).\n\nNo Behavior check: the branch changes no Platform with a Verify skill."));
+  });
+
+  test("the first Platform with a Verify skill is the one checked", async () => {
+    const android: Platform = { ...platform("android"), verifySkill: "verify-android" };
+    const { sut, calls } = check({ platforms: [web, android, ios], runs: { 1: [{ platforms: [web, android, ios] }] } });
+
+    await sut.run();
+
+    assert.ok(calls.includes("verify verify-android at head-1"));
+  });
+});
+
 describe("runAfkLoop, blocked issues", () => {
   test("a blocked issue stays blocked behind the open PR", async () => {
     const { sut, agents } = makeSUT({ issues: [issue(1), issue(2, { openBlockers: 1 })] });
@@ -961,9 +1206,12 @@ interface Fixture {
   runs?: Record<number, Run[]>;
   testRunResults?: (string | null)[];
   pushFails?: boolean;
+  attachFails?: string;
   rejectedReviews?: number;
   linkedIssues?: LinkedIssue[];
   comments?: Record<number, string[] | "unreadable">;
+  platforms?: Platform[];
+  verifier?: (head: string) => Partial<VerifierRun>;
 }
 
 interface Run {
@@ -986,7 +1234,7 @@ function makeSUT(fixture: Fixture) {
   const tracker = new SpyTracker(fixture, calls);
   const agents = new SpyAgents(fixture, calls);
   const testRunner = new SpyTestRunner(fixture.testRunResults ?? [], calls);
-  const sut = { run: (cap?: number) => runAfkLoop({ tracker, agents, testRunner, cap, platforms: [web, server] }) };
+  const sut = { run: (cap?: number) => runAfkLoop({ tracker, agents, testRunner, cap, platforms: fixture.platforms ?? [web, server] }) };
   return { sut, tracker, agents, testRunner, calls };
 }
 
@@ -998,6 +1246,17 @@ function platform(name: string): Platform {
 
 const web = platform("web");
 const server = platform("server");
+const ios: Platform = { ...platform("ios"), verifySkill: "verify-ios" };
+
+const metClaim: Claim = { kind: "criterion", criterion: "The streak counts the day", result: "met", observed: "The streak read 1 day.", screenshots: ["streak.png"], feature: "streak.md" };
+
+function manifest(head: string, overrides: Partial<Manifest> = {}): string {
+  return JSON.stringify({ outcome: "PASS", head, claims: [metClaim], skipped: [], ...overrides });
+}
+
+function passing(head: string): VerifierRun {
+  return { log: "logs/issue-1-verifier-1", evidence: `.sandcastle/evidence/1-${head}/`, manifest: manifest(head), files: [{ name: "streak.png", bytes: 2048 }], head, dirty: false };
+}
 
 function testRuns(calls: string[]): number {
   return calls.filter((call) => call.startsWith("test run")).length;
@@ -1007,15 +1266,17 @@ function linked(number: number): LinkedIssue {
   return { number, title: `Issue ${number}`, body: "", comments: [] };
 }
 
+const criteria = "## Acceptance criteria\n\n- [ ] The streak counts the day";
+
 function issue(number: number, overrides: Partial<Issue> = {}): Issue {
-  return { number, title: `Issue ${number}`, body: "", labels: ["ready-for-agent"], openBlockers: 0, ...overrides };
+  return { number, title: `Issue ${number}`, body: criteria, labels: ["ready-for-agent"], openBlockers: 0, ...overrides };
 }
 
 class SpyTracker implements Tracker {
   issues: Issue[];
   pushedBranches: string[];
   pushed: string[] = [];
-  pullRequests: PullRequest[] = [];
+  pullRequests: (PullRequest & { attached: readonly string[] })[] = [];
   reviews: PullRequestReview[] = [];
   comments: string[] = [];
 
@@ -1054,7 +1315,10 @@ class SpyTracker implements Tracker {
 
   async openPullRequest(pullRequest: PullRequest) {
     this.calls.push(`open PR ${pullRequest.branch}`);
-    this.pullRequests.push(pullRequest);
+    const { attachments, ...opened } = pullRequest;
+    const { attachFails } = this.fixture;
+    if (attachments && attachFails) this.pullRequests.push({ ...opened, body: attachments.unattached(attachFails), attached: [] });
+    else this.pullRequests.push({ ...opened, attached: attachments?.files ?? [] });
     return `https://pr/${pullRequest.branch}`;
   }
 
@@ -1156,6 +1420,10 @@ class SpyAgents implements Agents {
         this.calls.push("inspect");
         commitsAheadAt.set(head, commitsAhead);
         return { dirty: run().dirty ?? false, head, commitsAhead, platforms: run().platforms ?? [web] };
+      },
+      verify: async (verifySkill, finalHead) => {
+        this.calls.push(`verify ${verifySkill} at ${finalHead}`);
+        return { ...passing(finalHead), ...this.fixture.verifier?.(finalHead) };
       },
       close: async () => {
         this.calls.push(`close ${branch}`);

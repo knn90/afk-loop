@@ -8,6 +8,8 @@ import { hostAt } from "./host.js";
 import { defineLoop } from "./loop-config.js";
 
 const failed = "gh fails";
+const attachRejected = "stderr:";
+const attachPartly = "partly:";
 
 describe("githubTracker", () => {
   const sut = makeSUT();
@@ -21,6 +23,14 @@ describe("githubTracker", () => {
 
     assert.equal(pullRequest, "https://github.com/acme/Habitat/pull/9");
     assert.deepEqual(sut.calls(), [["pr", "create", "-R", "acme/Habitat", "--base", "develop", "--head", "issue/4-streak", "--title", "[#4] - Streak", "--body", "Closes #4.", "--label", "ready-for-human"]]);
+  });
+
+  test("a PR with attachments passes each as --attach", async () => {
+    const tracker = githubTracker(defineLoop(config), hostAt(tmpdir()));
+
+    await tracker.openPullRequest({ branch: "issue/4-streak", title: "[#4] - Streak", body: "Closes #4.", attachments: { files: ["e/streak.png", "e/drive.mp4"], unattached: () => "unused" } });
+
+    assert.deepEqual(sut.calls().at(-1)?.slice(-6), ["--label", "ready-for-human", "--attach", "e/streak.png", "--attach", "e/drive.mp4"]);
   });
 
   test("a review is posted on the PR as a comment, its findings on their paths and lines of the new side", async () => {
@@ -53,6 +63,61 @@ describe("githubTracker", () => {
     const posting = tracker.postReview("https://github.com/acme/Habitat/pull/9", { body: "", comments: [{ path: "web/gone.ts", line: 1, body: "Unprocessable" }] });
 
     await assert.rejects(posting);
+  });
+});
+
+describe("githubTracker, attachments GitHub rejects", () => {
+  const sut = makeSUT({ "--attach": `${attachRejected}HTTP 422: Unprocessable Entity` });
+  before(sut.install);
+  after(sut.uninstall);
+
+  test("the PR still opens, without attachments, with the body for the gh error", async () => {
+    const tracker = githubTracker(defineLoop(config), hostAt(tmpdir()));
+
+    const pullRequest = await tracker.openPullRequest({
+      branch: "issue/4-streak",
+      title: "[#4] - Streak",
+      body: "Closes #4.",
+      attachments: { files: ["e/streak.png"], unattached: (ghError) => `Closes #4. Not attached: ${ghError}` },
+    });
+
+    assert.equal(pullRequest, "https://github.com/acme/Habitat/pull/9");
+    assert.deepEqual(sut.calls().at(-1), ["pr", "create", "-R", "acme/Habitat", "--base", "main", "--head", "issue/4-streak", "--title", "[#4] - Streak", "--body", "Closes #4. Not attached: HTTP 422: Unprocessable Entity", "--label", "ready-for-human"]);
+  });
+});
+
+describe("githubTracker, attachments that only partly upload", () => {
+  const sut = makeSUT({ "--attach": `${attachPartly}failed to upload e/drive.mp4` });
+  before(sut.install);
+  after(sut.uninstall);
+
+  test("the PR gh opened keeps its URL and gets the body for the gh error, with no second PR", async () => {
+    const tracker = githubTracker(defineLoop(config), hostAt(tmpdir()));
+
+    const pullRequest = await tracker.openPullRequest({
+      branch: "issue/4-streak",
+      title: "[#4] - Streak",
+      body: "Closes #4.",
+      attachments: { files: ["e/streak.png", "e/drive.mp4"], unattached: (ghError) => `Closes #4. Not attached: ${ghError}` },
+    });
+
+    assert.equal(pullRequest, "https://github.com/acme/Habitat/pull/9");
+    assert.equal(sut.calls().filter((call) => call[1] === "create").length, 1);
+    assert.deepEqual(sut.calls().at(-1), ["pr", "edit", "https://github.com/acme/Habitat/pull/9", "-R", "acme/Habitat", "--body", "Closes #4. Not attached: failed to upload e/drive.mp4"]);
+  });
+});
+
+describe("githubTracker, a PR GitHub rejects with and without attachments", () => {
+  const sut = makeSUT({ "--attach": `${attachRejected}HTTP 422: Unprocessable Entity`, "pr create": `${attachRejected}HTTP 401: Bad credentials` });
+  before(sut.install);
+  after(sut.uninstall);
+
+  test("opening it fails with the first gh error", async () => {
+    const tracker = githubTracker(defineLoop(config), hostAt(tmpdir()));
+
+    const opening = tracker.openPullRequest({ branch: "issue/4-streak", title: "[#4] - Streak", body: "Closes #4.", attachments: { files: ["e/streak.png"], unattached: () => "unused" } });
+
+    await assert.rejects(opening, /HTTP 422: Unprocessable Entity/);
   });
 });
 
@@ -154,6 +219,15 @@ if (args.includes("--input")) {
 const responses = ${JSON.stringify(responses)};
 const asked = Object.keys(responses).find((key) => args.some((arg) => arg.includes(key)) || args.join(" ").startsWith(key));
 if (asked !== undefined && responses[asked] === ${JSON.stringify(failed)}) process.exit(1);
+if (asked !== undefined && responses[asked].startsWith(${JSON.stringify(attachPartly)})) {
+  console.log("https://github.com/acme/Habitat/pull/9");
+  process.stderr.write(responses[asked].slice(${JSON.stringify(attachPartly)}.length) + "\\n");
+  process.exit(1);
+}
+if (asked !== undefined && responses[asked].startsWith(${JSON.stringify(attachRejected)})) {
+  process.stderr.write(responses[asked].slice(${JSON.stringify(attachRejected)}.length) + "\\n");
+  process.exit(1);
+}
 console.log(asked === undefined ? "https://github.com/acme/Habitat/pull/9" : responses[asked]);
 `,
   );

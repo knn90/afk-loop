@@ -1,5 +1,5 @@
 import type { Issue, LinkedIssue, Tracker } from "./afk-loop.js";
-import { gh, ghWithInput, lines, repoUrl, type Host } from "./host.js";
+import { gh, ghAt, ghWithInput, lines, repoUrl, type Host } from "./host.js";
 import type { Loop } from "./loop-config.js";
 import { readyForAgent, readyForHuman } from "./loop-rules.js";
 import { hasWriteAccess, isLoopComment } from "./review-comments.js";
@@ -66,6 +66,15 @@ function pushedBranches(repo: string): string[] {
   return lines(gh("api", "--paginate", `repos/${repo}/branches?per_page=100`, "--jq", ".[].name"));
 }
 
+function ghError(error: unknown): string {
+  const stderr = String((error as { stderr?: unknown }).stderr ?? "").trim();
+  return (stderr || String(error)).replace(/\s+/g, " ");
+}
+
+function openedPullRequest(error: unknown): string | undefined {
+  return String((error as { stdout?: unknown }).stdout ?? "").match(/https:\/\/github\.com\/\S+\/pull\/\d+/)?.[0];
+}
+
 export function githubTracker({ repo, baseBranch }: Loop, host: Host): Tracker {
   return {
     async backlog() {
@@ -84,8 +93,23 @@ export function githubTracker({ repo, baseBranch }: Loop, host: Host): Tracker {
       host.gitWithGitHub("push", repoUrl(repo), `refs/heads/${branch}:refs/heads/${branch}`);
     },
 
-    async openPullRequest({ branch, title, body }) {
-      return gh("pr", "create", "-R", repo, "--base", baseBranch, "--head", branch, "--title", title, "--body", body, "--label", readyForHuman).trim();
+    async openPullRequest({ branch, title, body, attachments }) {
+      const create = (body: string, ...attach: string[]) => ghAt(host.repoRoot, "pr", "create", "-R", repo, "--base", baseBranch, "--head", branch, "--title", title, "--body", body, "--label", readyForHuman, ...attach).trim();
+      if (!attachments) return create(body);
+      try {
+        return create(body, ...attachments.files.flatMap((file) => ["--attach", file]));
+      } catch (error) {
+        const opened = openedPullRequest(error);
+        if (opened) {
+          ghAt(host.repoRoot, "pr", "edit", opened, "-R", repo, "--body", attachments.unattached(ghError(error)));
+          return opened;
+        }
+        try {
+          return create(attachments.unattached(ghError(error)));
+        } catch {
+          throw error;
+        }
+      }
     },
 
     async postReview(pullRequest, { body, comments }) {
